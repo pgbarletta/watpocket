@@ -1,0 +1,36 @@
+flowchart LR
+  subgraph CHEM[chemfiles]
+    T[Trajectory]
+    F[Frame]
+    Top[Topology + Residue]
+    Pos[positions()]
+    Prop[Residue properties\n`chainid`/`chainname`]
+  end
+
+  subgraph APP[watpocket adapters (`src/watpocket/main.cpp`)]
+    Parse[Selector parsing\n`parse_residue_selectors()`]
+    Lookup[Residue maps\n`build_residue_lookup()`]
+    CA[CA extraction\n`find_ca_atom_index()`]
+    Water[Water oxygen extraction\n`collect_water_oxygens()`]
+    Classify[Hull membership\n`point_inside_or_on_hull()`]
+  end
+
+  subgraph CGAL[CGAL]
+    Ker[Kernel\nEPIK]
+    CH[convex_hull_3]
+    Mesh[Surface_mesh]
+    Plane[Plane_3 halfspaces]
+  end
+
+  T --> F --> Top
+  F --> Pos
+  Top --> Prop
+
+  Top --> Lookup
+  Pos --> CA
+  Parse --> CA
+  Pos --> Water
+  Water --> Classify
+
+  CA --> Ker
+  Ker --> CH --> Mesh --> Plane --> Classify

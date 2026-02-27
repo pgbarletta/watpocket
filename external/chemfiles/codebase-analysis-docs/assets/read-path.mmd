@@ -1,0 +1,12 @@
+flowchart TD
+    A[Trajectory::read/read_at\nsrc/Trajectory.cpp] --> B[pre_read checks\nmode + bounds]
+    B --> C[Format::read/read_at virtual]
+
+    C --> D1[TextFormat::read_at\nseek cached frame_positions]
+    C --> D2[Binary format read_at\nuse offsets or frame-size arithmetic]
+
+    D1 --> E[Format parser fills Frame\npositions/cell/topology/properties]
+    D2 --> E
+
+    E --> F[Trajectory::post_read\napply custom topology/cell overrides]
+    F --> G[Frame returned with index set]

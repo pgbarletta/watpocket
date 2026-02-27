@@ -8,22 +8,6 @@ function(myproject_setup_dependencies)
   # For each dependency, see if it's
   # already been provided to us by a parent project
 
-  if(NOT TARGET fmtlib::fmtlib)
-    cpmaddpackage("gh:fmtlib/fmt#12.1.0")
-  endif()
-
-  if(NOT TARGET spdlog::spdlog)
-    cpmaddpackage(
-      NAME
-      spdlog
-      VERSION
-      1.17.0
-      GITHUB_REPOSITORY
-      "gabime/spdlog"
-      OPTIONS
-      "SPDLOG_FMT_EXTERNAL ON")
-  endif()
-
   if(NOT TARGET Catch2::Catch2WithMain)
     cpmaddpackage("gh:catchorg/Catch2@3.12.0")
   endif()
@@ -32,12 +16,24 @@ function(myproject_setup_dependencies)
     cpmaddpackage("gh:CLIUtils/CLI11@2.6.1")
   endif()
 
-  if(NOT TARGET ftxui::screen)
-    cpmaddpackage("gh:ArthurSonzogni/FTXUI@6.1.9")
+  # Use vendored Chemfiles and CGAL from the repository (no per-build download
+  # for these dependencies).
+  if(NOT TARGET chemfiles)
+    set(CHFL_BUILD_TESTS OFF CACHE BOOL "Build chemfiles unit tests" FORCE)
+    set(CHFL_BUILD_DOCUMENTATION OFF CACHE BOOL "Build chemfiles documentation" FORCE)
+    add_subdirectory(
+      "${CMAKE_CURRENT_LIST_DIR}/external/chemfiles"
+      "${CMAKE_CURRENT_BINARY_DIR}/external/chemfiles"
+      EXCLUDE_FROM_ALL)
   endif()
 
-  if(NOT TARGET tools::tools)
-    cpmaddpackage("gh:lefticus/tools#update_build_system")
+  if(NOT TARGET CGAL::CGAL)
+    find_package(
+      CGAL
+      CONFIG
+      REQUIRED
+      PATHS "${CMAKE_CURRENT_LIST_DIR}/external/cgal"
+      NO_DEFAULT_PATH)
   endif()
 
 endfunction()

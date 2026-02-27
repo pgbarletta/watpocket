@@ -1,0 +1,9 @@
+flowchart LR
+  CLI[CLI / Argument Parsing\n`main()` + CLI11] --> IO[Chemfiles Input\n`chemfiles::Trajectory::read()`]
+  IO --> SEL[Residue Resolution\n`parse_residue_selectors()` + `resolve_ca_points()`]
+  SEL --> GEO[Hull Geometry\n`compute_hull_data()`]
+  GEO --> ANA[Water Analysis\n`find_waters_inside_hull()`]
+  ANA --> OUT[Console Output\nresidue ids + PyMOL selection]
+  GEO --> DRAW[PyMOL Script Writer\n`write_pymol_script()`]
+  ANA --> DRAW
+  DRAW --> FILE[`.py` script artifact]

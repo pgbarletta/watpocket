@@ -1,0 +1,13 @@
+#!/bin/bash
+
+cmake -S . -B build \
+	-DCMAKE_BUILD_TYPE=Debug \
+	-Dmyproject_ENABLE_SANITIZER_ADDRESS=OFF \
+	-Dmyproject_ENABLE_SANITIZER_UNDEFINED=OFF \
+	-Dmyproject_ENABLE_CLANG_TIDY=OFF \
+	-Dmyproject_ENABLE_CPPCHECK=OFF \
+	-DCMAKE_C_COMPILER_LAUNCHER= \
+	-DCMAKE_CXX_COMPILER_LAUNCHER=
+
+cmake --build build --target watpocket --parallel 12
+

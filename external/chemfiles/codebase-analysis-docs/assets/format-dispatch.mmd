@@ -1,0 +1,12 @@
+flowchart TD
+    U[User input\npath + mode + optional format] --> P[file_open_info::parse\nsrc/Trajectory.cpp]
+    P -->|format empty| G[guess_format(path, mode)\nsrc/guess_format.cpp]
+    P -->|format provided| N[Trim format/compression]
+    G --> X[Extension + compressed suffix\n.gz/.bz2/.xz]
+    X --> Y[CIF vs mmCIF sniff\nfor read/append]
+    Y --> E[FormatFactory::by_extension]
+    N --> B[FormatFactory::by_name]
+    E --> R[RegisteredFormat\ncreator + memory_stream_creator]
+    B --> R
+    R --> F[Concrete Format instance]
+    F --> T[Trajectory holds unique_ptr<Format>]

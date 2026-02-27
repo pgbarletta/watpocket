@@ -1,0 +1,265 @@
+// Chemfiles, a modern library for chemistry file reading and writing
+// Copyright (C) Guillaume Fraux and contributors -- BSD license
+
+#include <cassert>
+#include <cstddef>
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "chemfiles/Trajectory.hpp"
+
+#include "chemfiles/File.hpp"
+#include "chemfiles/Format.hpp"
+#include "chemfiles/Frame.hpp"
+#include "chemfiles/UnitCell.hpp"
+#include "chemfiles/Topology.hpp"
+#include "chemfiles/FormatFactory.hpp"
+#include "chemfiles/files/MemoryBuffer.hpp"
+
+#include "chemfiles/misc.hpp"
+#include "chemfiles/utils.hpp"
+#include "chemfiles/error_fmt.hpp"
+#include "chemfiles/external/span.hpp"
+#include "chemfiles/external/optional.hpp"
+
+using namespace chemfiles;
+
+struct file_open_info {
+    static file_open_info parse(const std::string& path, std::string format);
+    std::string format;
+    File::Compression compression = File::DEFAULT;
+};
+
+file_open_info file_open_info::parse(const std::string& path, std::string format) {
+    file_open_info info;
+
+    if (format.empty()) {
+        format = guess_format(path);
+    }
+
+    auto slash = format.find('/');
+    if (slash != std::string::npos) {
+        auto tmp = format.substr(slash + 1);
+        auto compression = trim(tmp);
+        if (compression == "GZ") {
+            info.compression = File::GZIP;
+        } else if (compression == "BZ2") {
+            info.compression = File::BZIP2;
+        } else if (compression == "XZ") {
+            info.compression = File::LZMA;
+        } else {
+            throw file_error("unknown compression method '{}'", compression);
+        }
+    }
+
+    auto tmp = format.substr(0, slash);
+    info.format = std::string(trim(tmp));
+
+    return info;
+}
+
+static File::Mode char_to_file_mode(char mode) {
+    switch (mode) {
+    case 'r':
+    case 'R':
+        return File::READ;
+    case 'a':
+    case 'A':
+        return File::APPEND;
+    case 'w':
+    case 'W':
+        return File::WRITE;
+    default:
+        throw file_error("unknown file mode '{}'", mode);
+    }
+}
+
+Trajectory::Trajectory(std::string path, char mode, const std::string& format)
+    : path_(std::move(path)), mode_(mode), format_(nullptr) {
+
+    auto info = file_open_info::parse(path_, format);
+    auto format_creator = FormatFactory::get().by_name(info.format).creator;
+
+    format_ = format_creator(path_, char_to_file_mode(mode), info.compression);
+
+    if (mode == 'r' || mode == 'a') {
+        size_ = format_->size();
+    }
+}
+
+Trajectory Trajectory::memory_reader(const char* data, size_t size, const std::string& format) {
+    auto info = file_open_info::parse("", format);
+
+    if (info.format == "") {
+        throw format_error("format name '{}' is invalid", format);
+    }
+
+    auto memory_creator = FormatFactory::get().by_name(info.format).memory_stream_creator;
+    auto buffer = std::make_shared<MemoryBuffer>(data, size);
+    // if in-memory I/O is not supported, this call will throw
+    auto format_impl = memory_creator(buffer, File::READ, info.compression);
+
+    return Trajectory('r', std::move(format_impl), std::move(buffer));
+}
+
+Trajectory Trajectory::memory_writer(const std::string& format) {
+    auto info = file_open_info::parse("", format);
+
+    if (info.format == "") {
+        throw format_error("format name '{}' is invalid", format);
+    }
+
+    auto memory_creator = FormatFactory::get().by_name(info.format).memory_stream_creator;
+    auto buffer = std::make_shared<MemoryBuffer>(8192);
+    // if in-memory I/O is not supported, this call will throw
+    auto format_impl = memory_creator(buffer, File::WRITE, info.compression);
+
+    return Trajectory('w', std::move(format_impl), std::move(buffer));
+}
+
+Trajectory::Trajectory(char mode, std::unique_ptr<Format> format, std::shared_ptr<MemoryBuffer> buffer)
+    : mode_(mode), format_(std::move(format)), buffer_(std::move(buffer)) {
+    if (mode == 'r' || mode == 'a') {
+        size_ = format_->size();
+    }
+}
+
+Trajectory::~Trajectory() = default;
+Trajectory::Trajectory(Trajectory&&) noexcept = default;
+Trajectory& Trajectory::operator=(Trajectory&&) noexcept = default;
+
+void Trajectory::pre_read(size_t index) {
+    if (index >= size_) {
+        if (size_ == 0) {
+            throw file_error(
+                "can not read file '{}' at index {}, it does not contain any frames",
+                path_, index
+            );
+        } else {
+            throw file_error(
+                "can not read file '{}' at index {}: there are {} frames in this file",
+                path_, index, size_
+            );
+        }
+    }
+    if (mode_ != File::READ) {
+        throw file_error(
+            "the file at '{}' was not opened in read mode", path_
+        );
+    }
+}
+
+void Trajectory::post_read(Frame& frame) {
+    if (custom_topology_) {
+        frame.set_topology(*custom_topology_);
+    }
+
+    if (custom_cell_) {
+        frame.set_cell(*custom_cell_);
+    }
+}
+
+void Trajectory::check_opened() const {
+    if (!format_) {
+        throw file_error("can not use a closed trajectory");
+    }
+}
+
+size_t Trajectory::size() const  {
+    check_opened();
+    return size_;
+}
+
+Frame Trajectory::read() {
+    check_opened();
+    pre_read(index_);
+
+    Frame frame;
+    format_->read(frame);
+    post_read(frame);
+
+    frame.set_index(index_);
+    index_++;
+
+    return frame;
+}
+
+Frame Trajectory::read_at(const size_t index) {
+    check_opened();
+    pre_read(index);
+
+    Frame frame;
+    format_->read_at(index, frame);
+    post_read(frame);
+
+    frame.set_index(index);
+    index_ = index + 1;
+
+    return frame;
+}
+
+void Trajectory::write(const Frame& frame) {
+    check_opened();
+    if (mode_ != File::WRITE && mode_ != File::APPEND) {
+        throw file_error(
+            "the file at '{}' was not opened in write or append mode", path_
+        );
+    }
+
+    if (custom_topology_ || custom_cell_) {
+        Frame copy = frame.clone();
+        if (custom_topology_) {
+            copy.set_topology(*custom_topology_);
+        }
+        if (custom_cell_) {
+            copy.set_cell(*custom_cell_);
+        }
+        format_->write(copy);
+    } else {
+        format_->write(frame);
+    }
+
+    index_++;
+    size_++;
+}
+
+void Trajectory::set_topology(const Topology& topology) {
+    check_opened();
+    custom_topology_ = topology;
+}
+
+void Trajectory::set_topology(const std::string& filename, const std::string& format) {
+    check_opened();
+    Trajectory topology_file(filename, 'r', format);
+    assert(topology_file.size() > 0);
+
+    auto frame = topology_file.read_at(0);
+    set_topology(frame.topology());
+}
+
+void Trajectory::set_cell(const UnitCell& cell) {
+    check_opened();
+    custom_cell_ = cell;
+}
+
+bool Trajectory::done() const {
+    check_opened();
+    return index_ >= size_;
+}
+
+void Trajectory::close() {
+    check_opened();
+    // delete the format and set the pointer to nullptr
+    format_.reset();
+}
+
+optional<span<const char>> Trajectory::memory_buffer() const {
+    if (buffer_ == nullptr || mode_ == File::READ) {
+        return nullopt;
+    }
+
+    return span<const char>(buffer_->data(), buffer_->data() + buffer_->size());
+}

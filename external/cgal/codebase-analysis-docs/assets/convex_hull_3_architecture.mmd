@@ -1,0 +1,76 @@
+flowchart TD
+  subgraph Public_API[Public API]
+    CH_PM["convex_hull_3(first,last, PolygonMesh)"]
+    CH_OBJ["convex_hull_3(first,last, Object)"]
+    CH_GRAPH["convex_hull_3(VertexListGraph, pm, np)"]
+    CH_ITS["convex_hull_3(first,last, vertices, faces)"]
+    EXT["extreme_points_3(range,out)"]
+    HS["halfspace_intersection_3(planes, pm, origin?)"]
+    HSC["halfspace_intersection_with_constructions_3(...)"]
+    CH_DYN["convex_hull_3_to_face_graph(Triangulation_3, pm)"]
+  end
+
+  subgraph Quickhull_Core[Convex_hull_3 Quickhull Core]
+    QH["ch_quickhull_face_graph"]
+    QH_SCAN["ch_quickhull_3_scan"]
+    VIS["find_visible_set"]
+    PART["partition_outside_sets"]
+    COP["coplanar_3_hull -> convex_hull_points_2"]
+  end
+
+  subgraph Traits[Traits and Predicates]
+    DEFTR["Default_traits_for_Chull_3"]
+    CHT["Convex_hull_traits_3"]
+    POS["Is_on_positive_side_of_plane_3\n(static -> interval -> exact)"]
+    EXTTR["Extreme_points_traits_adapter_3"]
+  end
+
+  subgraph Dual_Halfspace[Dual Halfspace Subsystem]
+    DTR["Convex_hull_traits_dual_3"]
+    LP["halfspace_intersection_interior_point_3\n(QP solver)"]
+    BUILD_P["build_primal_polyhedron"]
+    BUILD_D["build_dual_polyhedron"]
+  end
+
+  subgraph Output_Adapters[Output Adapters]
+    TDS["Triangulation_data_structure_2\n(Convex_hull_face_base_2 / vertex_base_2)"]
+    COPYFG["copy_face_graph"]
+    OWRAP["Output_iterator_wrapper"]
+    ITSW["Indexed_triangle_set"]
+  end
+
+  subgraph Dynamic_Path[Dynamic Hull Bridge]
+    LINK["link_to_face_graph(T, infinite_vertex, pm)"]
+  end
+
+  CH_PM --> DEFTR
+  CH_OBJ --> DEFTR
+  CH_GRAPH --> CH_PM
+  CH_ITS --> ITSW
+  EXT --> OWRAP
+  CH_PM --> QH
+  CH_OBJ --> QH
+  CH_ITS --> QH
+  EXT --> QH
+  QH --> COP
+  QH --> QH_SCAN
+  QH_SCAN --> VIS
+  QH_SCAN --> PART
+  VIS --> POS
+  PART --> POS
+  CH_PM --> TDS
+  CH_OBJ --> TDS
+  QH --> COPYFG
+  COPYFG --> TDS
+  DEFTR --> CHT
+  CHT --> POS
+  EXT --> EXTTR
+  EXTTR --> CHT
+  HS --> DTR
+  HS --> LP
+  HS --> QH
+  HS --> BUILD_P
+  HSC --> LP
+  HSC --> QH
+  HSC --> BUILD_D
+  CH_DYN --> LINK

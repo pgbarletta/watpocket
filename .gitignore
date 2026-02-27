@@ -34,3 +34,8 @@ $RECYCLE.BIN/
 .TemporaryItems
 ehthumbs.db
 Thumbs.db
+
+
+# mine
+external/cgal/.git
+external/chemfiles/.git

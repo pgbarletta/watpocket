@@ -1,0 +1,17 @@
+flowchart TD
+  A[Input path(s)] --> B{1 or 2 positional args?}
+  B -->|1| C[Open structure via Chemfiles\n`Trajectory(path,'r')`]
+  B -->|2| X[Trajectory mode branch\nthrows "not implemented yet"]
+  C --> D[Read first frame\n`trajectory.read()`]
+  D --> E[Build residue lookup\nby chain/id and id]
+  E --> F[Resolve CA coordinates\nselected residues]
+  F --> G[Degeneracy checks\n<4 / collinear / coplanar]
+  G --> H[CGAL convex hull\n`convex_hull_3` -> `Surface_mesh`]
+  H --> I[Derive hull edges + inward halfspaces]
+  D --> J[Collect water oxygen atoms\nresname+atom filters]
+  I --> K[Point-in-hull tests\n`Plane_3::oriented_side`]
+  J --> K
+  K --> L[Sorted unique water residue ids]
+  L --> M[Print residues + `select watpocket, resi ...`]
+  L --> N{`-d/--draw` set?}
+  N -->|yes| O[Write PyMOL script\nload input, hull lines, watpocket spheres]

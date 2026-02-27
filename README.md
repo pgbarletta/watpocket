@@ -1,71 +1,77 @@
-# cmake_template
+# watpocket
 
-[![ci](https://github.com/cpp-best-practices/cmake_template/actions/workflows/ci.yml/badge.svg)](https://github.com/cpp-best-practices/cmake_template/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/cpp-best-practices/cmake_template/branch/main/graph/badge.svg)](https://codecov.io/gh/cpp-best-practices/cmake_template)
-[![CodeQL](https://github.com/cpp-best-practices/cmake_template/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/cpp-best-practices/cmake_template/actions/workflows/codeql-analysis.yml)
+`watpocket` is a C++ command-line tool that reads a molecular structure, selects residues by residue number, extracts their C-alpha (`CA`) atoms, and computes a 3D convex hull using CGAL.
 
-## About cmake_template
+## Current Feature Set (v1)
 
-This is a C++ Best Practices GitHub template for getting up and running with C++ quickly.
+- Single-frame structure input via Chemfiles (`.pdb`, `.cif`, `.mmcif` tested path)
+- Required residue selection with `--resnums`
+- Convex hull generation via CGAL `convex_hull_3`
+- Optional PyMOL script output with `-d/--draw` to render hull edges as CGO lines
 
-By default (collectively known as `ENABLE_DEVELOPER_MODE`)
+## CLI
 
- * Address Sanitizer and Undefined Behavior Sanitizer enabled where possible
- * Warnings as errors
- * clang-tidy and cppcheck static analysis
- * CPM for dependencies
+```bash
+watpocket <structure> --resnums <selectors> [-d output.py]
+watpocket <topology> <trajectory> --resnums <selectors>
+```
 
-It includes
+### Input Rules
 
- * a basic CLI example
- * examples for fuzz, unit, and constexpr testing
- * large GitHub action testing matrix
- * WebAssembly build support with automatic GitHub Pages deployment
+- With one positional input, it is treated as a structure file.
+- With two positional inputs, they are interpreted as `<topology> <trajectory>`, but this mode is not implemented yet in v1.
 
-**Live Demo:** If you enable GitHub Pages in your project created from this template, you'll have a working example like this:
-- Main: [https://cpp-best-practices.github.io/cmake_template/](https://cpp-best-practices.github.io/cmake_template/)
-- Develop: [https://cpp-best-practices.github.io/cmake_template/develop/](https://cpp-best-practices.github.io/cmake_template/develop/)
+### Residue Selector Rules
 
-The `main` branch deploys to the root, `develop` to `/develop/`, and tags to `/tagname/`.
+- `--resnums` takes comma-separated selectors.
+- Supported selector forms:
+  - `12,15,18`
+  - `A:12,A:15,B:18`
+- If the input structure contains more than one chain, selectors must be chain-qualified (for example `A:12`).
+- Every selected residue must contain exactly one atom named `CA`.
 
-It requires
+### Geometry Rules
 
- * cmake
- * a compiler
+The program raises an error if selected C-alpha points are:
 
+- fewer than 4 points,
+- collinear,
+- coplanar.
 
-This project gets you started with a simple example of using FTXUI, which happens to also be a game.
+## `--draw` PyMOL Script Output
 
+When `-d/--draw` is provided, `watpocket` writes a Python script for PyMOL that:
 
-## Getting Started
+- loads the input structure,
+- creates a CGO object with hull edges (`LINES` only),
+- applies default styling for readability.
 
-### Use the GitHub template
-First, click the green `Use this template` button near the top of this page.
-This will take you to GitHub's ['Generate Repository'](https://github.com/cpp-best-practices/cmake_template/generate)
-page.
-Fill in a repository name and short description, and click 'Create repository from template'.
-This will allow you to create a new repository in your GitHub account,
-prepopulated with the contents of this project.
+In draw mode, the input must be `.pdb`, `.cif`, or `.mmcif`.
 
-After creating the project please wait until the cleanup workflow has finished 
-setting up your project and committed the changes.
+## Dependencies
 
-Now you can clone the project locally and get to work!
+- Vendored in repository (no per-build download for these):
+  - `external/cgal`
+  - `external/chemfiles`
+- CPM is still enabled for other dependencies (for example `CLI11`).
 
-    git clone https://github.com/<user>/<your_new_repo>.git
+## Build
 
-## More Details
+Use the existing CMake flow and presets from this repository:
 
- * [Dependency Setup](README_dependencies.md)
- * [Building Details](README_building.md)
- * [Docker](README_docker.md)
+```bash
+cmake -S . -B build
+cmake --build build -j
+```
 
-## Testing
+## Example
 
-See [Catch2 tutorial](https://github.com/catchorg/Catch2/blob/master/docs/tutorial.md)
+```bash
+watpocket protein.pdb --resnums A:12,A:15,A:18,A:26 -d hull.py
+```
 
-## Fuzz testing
+Then in PyMOL:
 
-See [libFuzzer Tutorial](https://github.com/google/fuzzing/blob/master/tutorial/libFuzzerTutorial.md)
-
-
+```python
+run hull.py
+```

@@ -1,0 +1,13 @@
+flowchart LR
+    A[Public API\ninclude/chemfiles.hpp\ninclude/chemfiles.h] --> B[Trajectory\nsrc/Trajectory.cpp]
+    B --> C[Format Guessing\nsrc/guess_format.cpp]
+    B --> D[FormatFactory Registry\nsrc/FormatFactory.cpp]
+    D --> E[Concrete Format\nsrc/formats/*.cpp]
+    E --> F[Frame/Topology/UnitCell/Property\nsrc/Frame.cpp\nsrc/Topology.cpp\nsrc/UnitCell.cpp\nsrc/Property.cpp]
+    E --> G[Text/Binary IO Helpers\nsrc/File.cpp\nsrc/files/*]
+    F --> H[Selection Engine\nsrc/Selection.cpp\nsrc/selections/*]
+    I[C API Bridge\nsrc/capi/*] --> B
+    I --> F
+    J[Tests + Examples\ntests/*, examples/*] --> A
+    J --> B
+    J --> E

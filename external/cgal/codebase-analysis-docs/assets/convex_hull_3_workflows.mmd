@@ -1,0 +1,35 @@
+flowchart TD
+  subgraph W1[Workflow 1: Static Quickhull -> PolygonMesh]
+    W1A["Input points [first,last)"] --> W1B["convex_hull_3(first,last, pm, traits)"]
+    W1B --> W1C{"Degenerate?"}
+    W1C -- "all equal / collinear" --> W1D["add isolated vertices or segment endpoints"]
+    W1C -- "coplanar" --> W1E["coplanar_3_hull + convex_hull_points_2"]
+    W1C -- "3D" --> W1F["ch_quickhull_face_graph"]
+    W1F --> W1G["ch_quickhull_3_scan\n(farthest point -> visible set -> star_hole)"]
+    W1G --> W1H["copy_face_graph(TDS, pm)"]
+  end
+
+  subgraph W2[Workflow 2: Any-dimension Result -> Object]
+    W2A["Input points [first,last)"] --> W2B["convex_hull_3(first,last, Object, traits)"]
+    W2B --> W2C{"cardinality / rank"}
+    W2C -- "1" --> W2D["Object = Point_3"]
+    W2C -- "2 or collinear" --> W2E["Object = Segment_3"]
+    W2C -- "3 non-collinear" --> W2F["Object = Triangle_3"]
+    W2C -- "3D hull" --> W2G["Object = PolygonMesh"]
+  end
+
+  subgraph W3[Workflow 3: Halfspace Intersection]
+    W3A["Input planes"] --> W3B["halfspace_intersection_3 / _with_constructions_3"]
+    W3B --> W3C{"origin provided?"}
+    W3C -- "no" --> W3D["halfspace_intersection_interior_point_3\n(linear program)"]
+    W3C -- "yes" --> W3E["use provided origin"]
+    W3D --> W3F["dualize planes"]
+    W3E --> W3F
+    W3F --> W3G["convex_hull_3 on dual representation"]
+    W3G --> W3H["build primal polyhedron"]
+  end
+
+  subgraph W4[Workflow 4: Dynamic Hull Bridge]
+    W4A["Delaunay_triangulation_3"] --> W4B["convex_hull_3_to_face_graph(T, pm)"]
+    W4B --> W4C["link_to_face_graph(T, T.infinite_vertex(), pm)"]
+  end

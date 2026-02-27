@@ -1,0 +1,4 @@
+sphinx ==7.1.2
+breathe >=4.30
+sphinx_bootstrap_theme
+toml

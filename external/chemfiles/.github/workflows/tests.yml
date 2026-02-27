@@ -1,0 +1,217 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    # Check all PR
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    name: ${{ matrix.name }}
+    strategy:
+      matrix:
+        include:
+          # ==
+          # linux builders, also used for various checks that should be
+          # platform independent
+          # ==
+          - name: Linux / gcc-14
+            os: ubuntu-24.04
+            cc: gcc-14
+            cxx: g++-14
+            build-type: Debug
+            check-exported-symbols: true
+            setup-dependencies: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-14 g++-14
+          - name: Linux / clang-21
+            os: ubuntu-24.04
+            cc: clang-21
+            cxx: clang++-21
+            build-type: Debug
+            setup-dependencies: |
+              wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+              sudo apt-get update
+              sudo apt-add-repository "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
+              sudo apt-get install -y clang-21
+          - name: Linux / gcc / static library
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            build-type: Debug
+            collect-coverage: true
+            cmake-extra-args:
+              - -DBUILD_SHARED_LIBS=OFF
+              - -DCMAKE_C_FLAGS="--coverage"
+              - -DCMAKE_CXX_FLAGS="--coverage"
+          - name: Linux / gcc / external dependencies
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            build-type: Debug
+            cmake-extra-args:
+              - -DCHFL_SYSTEM_ZLIB=ON
+              - -DCHFL_SYSTEM_LZMA=ON
+              - -DCHFL_SYSTEM_BZIP2=ON
+              - -DCHFL_DISABLE_GEMMI=ON
+            setup-dependencies: |
+              sudo apt-get update
+              sudo apt-get install -y liblzma-dev libbz2-dev zlib1g-dev
+          - name: Linux / gcc / 32-bit build
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            build-type: Debug
+            cmake-extra-args:
+              - -DCMAKE_CXX_FLAGS=-m32
+              - -DCMAKE_C_FLAGS=-m32
+            setup-dependencies: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-multilib g++-multilib
+          - name: Linux / gcc-9 & cmake-3.16
+            os: ubuntu-24.04
+            container: ubuntu:20.04
+            cc: gcc
+            cxx: g++
+            build-type: Debug
+            setup-dependencies: |
+              apt-get update
+              apt-get install -y cmake gcc g++ make python3
+          # - name: Linux / emscripten
+          #   os: ubuntu-24.04
+          #   cc: emcc
+          #   cxx: emcc
+          #   build-type: Debug
+          #   use-emsdk: true
+          #   emscripten-version: 3.1.43
+          #   cmake-extra-args:
+          #     - -DCHFL_BUILD_DOCTESTS=OFF
+          #     - -DBUILD_SHARED_LIBS=OFF
+          #     - -DCMAKE_CXX_FLAGS="-O1"
+          #     - -DCMAKE_C_FLAGS="-O1"
+          #     - -DCMAKE_TOOLCHAIN_FILE=/home/runner/work/chemfiles/chemfiles/emsdk/emsdk-main/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
+          #     - -DCMAKE_CROSSCOMPILING_EMULATOR=/home/runner/work/chemfiles/chemfiles/emsdk/emsdk-main/node/14.15.5_64bit/bin/node
+          - name: Linux / valgrind
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            build-type: Debug
+            cmake-extra-args:
+              - -DCHFL_TESTS_USE_VALGRIND=ON
+            setup-dependencies: |
+              sudo apt-get update
+              sudo apt-get install -y valgrind
+
+          # ==
+          # macOS builder
+          # ==
+          - name: macOS / clang
+            os: macos-15
+            cc: clang
+            cxx: clang++
+            build-type: Debug
+
+          # ==
+          # windows builders
+          # ==
+          - name: windows / MSVC 64-bit
+            os: windows-2022
+            cc: cl.exe
+            cxx: cl.exe
+            build-type: Debug
+            cmake-extra-args:
+              - -G "Visual Studio 17 2022" -A x64
+          - name: windows / MSVC 64-bit / static library
+            os: windows-2022
+            cc: cl.exe
+            cxx: cl.exe
+            # The compiler completely fills up the disk when building all tests
+            # in debug mode, so use release
+            build-type: Release
+            cmake-extra-args:
+              - -G "Visual Studio 17 2022" -A x64
+              - -DBUILD_SHARED_LIBS=OFF
+          - name: windows / MSVC 32-bit
+            os: windows-2022
+            cc: cl.exe
+            cxx: cl.exe
+            build-type: Debug
+            cmake-extra-args:
+              - -G "Visual Studio 17 2022" -A Win32
+          - name: windows / MinGW
+            os: windows-2022
+            cc: C:/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin/x86_64-w64-mingw32-gcc.exe
+            cxx: C:/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin/x86_64-w64-mingw32-g++.exe
+            # Linking takes a lot longer with debug information
+            build-type: Release
+            use-mingw: true
+            cmake-extra-args:
+              - -G "MinGW Makefiles"
+              - -DCMAKE_TOOLCHAIN_FILE=.github/MinGW-Toolchain.cmake
+              - -DCHFL_BUILD_DOCTESTS=OFF
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Set up MinGW
+        if: ${{ matrix.use-mingw }}
+        uses: egor-tensin/setup-mingw@v3
+        with:
+          platform: x64
+          version: 12.2.0
+
+      # - name: Setup emsdk
+      #   if: ${{ matrix.use-emsdk }}
+      #   uses: mymindstorm/setup-emsdk@v14
+      #   with:
+      #     version: ${{ matrix.emscripten-version }}
+      #     actions-cache-folder: "emsdk"
+
+      - name: setup dependencies
+        run: ${{ matrix.setup-dependencies }}
+
+      - name: configure cmake
+        shell: bash
+        run: |
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} \
+                -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+                -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+                -DBUILD_SHARED_LIBS=ON \
+                -DCHFL_BUILD_TESTS=ON \
+                ${{ join(matrix.cmake-extra-args, ' ') }} \
+                ..
+
+      - name: build
+        run: |
+          cd build
+          cmake --build . --config ${{ matrix.build-type }} --parallel 2
+
+      - name: run tests
+        run: |
+          cd build
+          ctest --output-on-failure --build-config ${{ matrix.build-type }} --parallel 2
+
+      - name: check the list of exported symbols
+        if: matrix.check-exported-symbols
+        run: ./scripts/ci/check-exported-symbols.py build/libchemfiles.so
+
+      - name: extract coverage data
+        if: matrix.collect-coverage
+        run: find . -type f -name '*.gcno' -exec gcov -p {} +
+
+      - name: upload coverage
+        uses: codecov/codecov-action@v5
+        if: matrix.collect-coverage
+        with:
+          fail_ci_if_error: true
+          verbose: true

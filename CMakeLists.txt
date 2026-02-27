@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.29)
+cmake_minimum_required(VERSION 3.28)
 
 # Disable modules support, this is broken with clang-tidy at the moment
 cmake_policy(SET CMP0155 OLD) 
@@ -101,7 +101,7 @@ if(MSVC)
 endif()
 
 # set the startup project for the "play" button in MSVC
-set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT intro)
+set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT watpocket)
 
 if(CMAKE_SKIP_INSTALL_RULES)
   return()
@@ -113,7 +113,7 @@ include(cmake/PackageProject.cmake)
 # we know we want to ship
 myproject_package_project(
   TARGETS
-  intro
+  watpocket
   myproject_options
   myproject_warnings
   # FIXME: this does not work! CK
