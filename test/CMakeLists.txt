@@ -31,6 +31,104 @@ add_test(NAME cli.has_help COMMAND watpocket --help)
 add_test(NAME cli.version_matches COMMAND watpocket --version)
 set_tests_properties(cli.version_matches PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}")
 
+get_filename_component(WATPOCKET_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(WATPOCKET_WCN_DATA_DIR "${WATPOCKET_SOURCE_ROOT}/tests/data/wcn")
+if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb")
+  add_test(
+    NAME cli.draw_rejects_unknown_extension
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb"
+      --resnums
+      164,128,160,55
+      --draw
+      "${CMAKE_CURRENT_BINARY_DIR}/draw_mode.txt")
+  set_tests_properties(
+    cli.draw_rejects_unknown_extension
+    PROPERTIES PASS_REGULAR_EXPRESSION "--draw output path must end with .py or .pdb")
+
+  add_test(
+    NAME cli.draw_writes_hull_pdb
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb"
+      --resnums
+      164,128,160,55
+      --draw
+      "${CMAKE_CURRENT_BINARY_DIR}/draw_mode.pdb")
+  set_tests_properties(
+    cli.draw_writes_hull_pdb
+    PROPERTIES PASS_REGULAR_EXPRESSION "Wrote hull PDB")
+endif()
+
+if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc")
+  add_test(
+    NAME cli.trajectory_draw_writes_model_pdb
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc"
+      --resnums
+      164,128,160,55
+      -o
+      "${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.csv"
+      --draw
+      "${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.pdb")
+  set_tests_properties(
+    cli.trajectory_draw_writes_model_pdb
+    PROPERTIES PASS_REGULAR_EXPRESSION "Wrote trajectory hull PDB")
+
+  add_test(
+    NAME cli.trajectory_draw_rejects_py
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc"
+      --resnums
+      164,128,160,55
+      -o
+      "${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw_py.csv"
+      --draw
+      "${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.py")
+  set_tests_properties(
+    cli.trajectory_draw_rejects_py
+    PROPERTIES PASS_REGULAR_EXPRESSION "trajectory mode --draw output path must end with .pdb")
+
+  add_test(
+    NAME cli.trajectory_requires_output
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc"
+      --resnums
+      164,128,160,55)
+  set_tests_properties(
+    cli.trajectory_requires_output
+    PROPERTIES PASS_REGULAR_EXPRESSION "-o/--output is required in trajectory mode")
+
+  add_test(
+    NAME cli.parm7_requires_two_inputs
+    COMMAND watpocket "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" --resnums 164,128,160,55)
+  set_tests_properties(
+    cli.parm7_requires_two_inputs
+    PROPERTIES PASS_REGULAR_EXPRESSION
+               "parm7/prmtop topology files are only supported in trajectory mode")
+
+  add_test(
+    NAME cli.parm7_chain_selector_without_chainid_fails
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc"
+      --resnums
+      A:164,128,160,55
+      -o
+      "${CMAKE_CURRENT_BINARY_DIR}/chain_selector_without_chainid.csv")
+  set_tests_properties(
+    cli.parm7_chain_selector_without_chainid_fails
+    PROPERTIES PASS_REGULAR_EXPRESSION "has no RESIDUE_CHAINID section")
+endif()
+
 add_executable(tests tests.cpp)
 target_link_libraries(
   tests

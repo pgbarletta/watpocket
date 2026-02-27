@@ -4,9 +4,10 @@
 - Primary implementation file is `src/watpocket/main.cpp`; current pipeline is monolithic in this translation unit, so new analyses should usually be added as new helper functions near `compute_hull_data()` and `find_waters_inside_hull()` and then called from `main()` (source: `src/watpocket/main.cpp:compute_hull_data`, `src/watpocket/main.cpp:find_waters_inside_hull`, `src/watpocket/main.cpp:main`).
 - Checklist:
   - Define CLI interface in `main()` using CLI11 (`app.add_option` / `app.add_flag`) (source: `src/watpocket/main.cpp:main`).
-  - Keep selector parsing and residue resolution consistent with existing helpers (`parse_residue_selectors`, `resolve_ca_points`) (source: `src/watpocket/main.cpp:parse_residue_selectors`, `src/watpocket/main.cpp:resolve_ca_points`).
-  - Decide whether the feature is structure-only or trajectory-capable; trajectory mode currently throws by design (source: `src/watpocket/main.cpp:main`).
-  - Define output path(s): stdout, PyMOL script, or new artifact.
+  - Keep selector parsing and residue resolution consistent across topology backends (`parse_residue_selectors`, `resolve_ca_atom_indices`) (source: `src/watpocket/main.cpp:parse_residue_selectors`, `src/watpocket/main.cpp:resolve_ca_atom_indices`).
+  - If the user asks for an implementation plan, follow planner-agent guidance in `.codex/agents/planner.md` before drafting the plan (source: `AGENTS.md`).
+  - For trajectory features, keep two-input mode constraints explicit: NetCDF (`.nc`) is supported now; topology can be chemfiles-readable structure or Amber `parm7/prmtop`; XTC/DCD are still planned (source: `src/watpocket/main.cpp:main`, `is_netcdf_trajectory_path`, `is_parm7_topology_path`).
+  - Define output path(s): stdout, draw artifact via `--draw` (`.py` or `.pdb`), trajectory CSV (`-o`), and trajectory draw PDB models when `--draw` is set in trajectory mode.
   - Add/extend tests (currently only CLI smoke and sample-library unit tests exist; no watpocket functional regression tests) (source: `test/CMakeLists.txt`).
 
 ### Add/modify protein/ligand selection semantics
@@ -24,7 +25,7 @@
 - Point classification treats boundary points as inside by rejecting only `ON_POSITIVE_SIDE` against inward-oriented face planes (source: `src/watpocket/main.cpp:point_inside_or_on_hull`, `src/watpocket/main.cpp:compute_hull_data`).
 
 ### Improve performance (I/O vs geometry) starting points
-- I/O today reads exactly one frame (`trajectory.read()`), so runtime is dominated by one parse pass and geometry/classification loops (source: `src/watpocket/main.cpp:main`, `src/watpocket/main.cpp:find_waters_inside_hull`).
+- Structure mode reads one frame; trajectory mode streams all frames and performs hull/classification per frame, so runtime scales with frame count and water candidate count (source: `src/watpocket/main.cpp:main`, `resolve_ca_atom_indices`, `find_waters_inside_hull`).
 - Build-time cost is dominated by dependency targets and test executables when building whole tree; `comp.sh` already constrains build to target `watpocket` and disables heavy tooling/sanitizers (source: `comp.sh`, `Dependencies.cmake`, `test/CMakeLists.txt`, `ProjectOptions.cmake`).
 
 ### Refactor safely: invariants and guardrails
@@ -69,7 +70,10 @@
 - CLI (`watpocket`):
   - positional `inputs` with arity 1..2
   - `--resnums` required
-  - `-d,--draw` optional output script path
+  - `-d,--draw` optional draw output path:
+    - single-structure mode: `.py` PyMOL or `.pdb` hull
+    - trajectory mode: `.pdb` only, written as per-frame `MODEL` blocks
+  - `-o,--output` required CSV path in trajectory mode (CSV is file-only)
   - `--version` (source: `src/watpocket/main.cpp:main`).
 - CMake options: sanitizers, static analyzers, ccache, coverage, IPO, hardening via `ProjectOptions.cmake` (source: `ProjectOptions.cmake`).
 - Env/config affecting dependency download/cache:
@@ -84,14 +88,21 @@
 
 ```mermaid
 flowchart LR
-  CLI[CLI / Argument Parsing\n`main()` + CLI11] --> IO[Chemfiles Input\n`chemfiles::Trajectory::read()`]
-  IO --> SEL[Residue Resolution\n`parse_residue_selectors()` + `resolve_ca_points()`]
-  SEL --> GEO[Hull Geometry\n`compute_hull_data()`]
-  GEO --> ANA[Water Analysis\n`find_waters_inside_hull()`]
-  ANA --> OUT[Console Output\nresidue ids + PyMOL selection]
-  GEO --> DRAW[PyMOL Script Writer\n`write_pymol_script()`]
-  ANA --> DRAW
-  DRAW --> FILE[`.py` script artifact]
+  CLI[CLI / Argument Parsing\n`main()` + CLI11] --> MODE{1 or 2 inputs}
+  MODE -->|1 input| IO1[Read structure frame]
+  IO1 --> SEL1[Resolve CA points]
+  SEL1 --> GEO1[Convex hull]
+  GEO1 --> ANA1[Water inside-hull]
+  ANA1 --> OUT1[stdout summary + optional draw artifact]
+  OUT1 --> DRAW[optional `--draw`\n`.py` PyMOL or `.pdb` hull]
+  MODE -->|2 inputs| TOP[Load topology\n(chemfiles or parm7 parser)]
+  TOP --> CACHE[Cache CA/water atom indices]
+  MODE -->|2 inputs| TRAJ[Read NetCDF trajectory frames]
+  TRAJ --> FRAME[Per-frame hull + water classification]
+  CACHE --> FRAME
+  FRAME --> CSV[CSV rows to required `-o` file]
+  FRAME --> TDRAW[Optional trajectory draw PDB\n`--draw *.pdb` with MODEL blocks]
+  FRAME --> STATS[Trajectory stats to stdout\nmin/max/mean/median + top 5 waters]
 ```
 
 ### Data-flow diagram (frame lifecycle)
@@ -99,7 +110,7 @@ flowchart LR
 flowchart TD
   A[Input path(s)] --> B{1 or 2 positional args?}
   B -->|1| C[Open structure via Chemfiles\n`Trajectory(path,'r')`]
-  B -->|2| X[Trajectory mode branch\nthrows \"not implemented yet\"]
+  B -->|2| T0[Open topology + NetCDF trajectory]
   C --> D[Read first frame\n`trajectory.read()`]
   D --> E[Build residue lookup\nby chain/id and id]
   E --> F[Resolve CA coordinates\nselected residues]
@@ -112,17 +123,47 @@ flowchart TD
   K --> L[Sorted unique water residue ids]
   L --> M[Print residues + `select watpocket, resi ...`]
   L --> N{`-d/--draw` set?}
-  N -->|yes| O[Write PyMOL script\nload input, hull lines, watpocket spheres]
+  N -->|yes| O{draw output extension}
+  O -->|.py| O1[Write PyMOL script\nload input, hull lines, watpocket spheres]
+  O -->|.pdb| O2[Write hull PDB\nATOM(ANA)+CONECT + inside-hull waters]
+  O -->|other| O3[Error: draw output must end with .py or .pdb]
+  T0 --> T1{topology extension}
+  T1 -->|.parm7/.prmtop| T2a[Parse parm7 sections:\nPOINTERS/ATOM_NAME/RESIDUE_LABEL/RESIDUE_POINTER]
+  T1 -->|other| T2b[Read topology frame via Chemfiles]
+  T2a --> T2[Cache CA indices + water oxygen refs]
+  T2b --> T2
+  T0 --> T3[Sanity check atom count\n(topology vs first trajectory frame)]
+  T3 --> T4{parm7 topology?}
+  T4 -->|no| T4a[Attach topology with `set_topology`]
+  T4 -->|yes| T4b[Skip Chemfiles topology attach]
+  T4a --> T5
+  T4b --> T5
+  T2 --> T5
+  T5 --> T5o{`-o/--output` provided?}
+  T5o -->|no| T5e[Error: output file is required]
+  T5o -->|yes| T5d{`--draw` provided?}
+  T5d -->|yes| T5dp{must be `.pdb`\nopen trajectory draw file}
+  T5d -->|no| T6
+  T5dp --> T6[Per-frame: CA points -> hull -> water classification]
+  T6 --> T6a{frame compute ok?}
+  T6a -->|yes| T7[CSV row: frame,resnums,total_count]
+  T7 --> T9[Write CSV file]
+  T6a -->|yes + draw| T8[Append MODEL block to draw PDB]
+  T6a -->|no| T6w[warn to stderr and skip frame]
+  T6a -->|yes| T10[Accumulate stats:\nwaters/frame + water presence counts]
+  T10 --> T11[Print summary stats to stdout]
+  T8 --> T12[Finalize draw file with END]
 ```
 
 ### End-to-end data flow narrative
 - Inputs are parsed with CLI11 in `main()`.
-- For 2 positional files, execution aborts with a not-implemented error; for 1 file, Chemfiles reads one frame.
+- For 1 positional file, Chemfiles reads one frame and runs structure-mode analysis + optional `--draw`.
+- For 2 positional files, topology is loaded once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), CA/water atom indices are cached, trajectory NetCDF frames are streamed, and one CSV row is produced per frame.
 - Residue selectors are parsed and mapped to residue objects using topology-derived lookup tables; each selected residue must map to exactly one residue and exactly one `CA` atom.
 - CA coordinates become `CGAL::Point_3` input to `CGAL::convex_hull_3`, producing a `CGAL::Surface_mesh`.
 - Hull mesh edges are extracted for rendering; hull face planes are oriented inward and stored as halfspaces.
 - Water oxygen atoms are identified from residue/atom name heuristics and tested against halfspaces.
-- Outputs include residue-id list + PyMOL selection string; optional draw mode emits a PyMOL script with hull lines and water visualization commands. (source: `src/watpocket/main.cpp:main`, `parse_residue_selectors`, `resolve_ca_points`, `compute_hull_data`, `collect_water_oxygens`, `find_waters_inside_hull`, `write_pymol_script`)
+- Outputs include structure-mode stdout results plus optional draw artifact selected by `--draw` extension (`.py` or `.pdb`), and trajectory-mode CSV (`frame,resnums,total_count`) to required `-o` path, optional trajectory draw PDB (`MODEL` blocks) when `--draw` is `.pdb`, with inside-hull waters appended as regular `ATOM` records, plus stdout trajectory statistics (min/max/mean/median waters per successful frame and top 5 waters by frame presence). (source: `src/watpocket/main.cpp:main`, `parse_residue_selectors`, `resolve_ca_atom_indices`, `compute_hull_data`, `collect_water_oxygen_refs`, `find_waters_inside_hull`, `collect_water_atoms_for_pdb`, `write_csv_row`, `write_trajectory_statistics`, `write_hull_pdb`, `write_hull_pdb_model`, `write_pymol_script`)
 
 ### Representative workflows (module-level call traces)
 1. Single-structure, analysis-only (no `-d`)
@@ -137,35 +178,54 @@ main
   -> find_waters_inside_hull
   -> stdout summary + select line
 ```
-2. Single-structure, draw mode
+2. Single-structure, draw mode (`--draw` extension-based)
    - Example script path shown in repo workflow data (`tests/data/wcn/run.sh` calling `-d sal.py`) (source: `tests/data/wcn/run.sh`).
    - Additional branch:
 ```text
 ...same as above...
-  -> write_pymol_script
-  -> output .py script with hull CGO + watpocket solvent display commands
+  -> inspect draw output extension
+  -> `.py`: write_pymol_script
+  -> `.pdb`: write_hull_pdb
 ```
-3. Topology + trajectory invocation (currently blocked)
-   - CLI accepts two positional inputs by signature, but branch throws `trajectory mode ... is not implemented yet` before any frame loop (source: `src/watpocket/main.cpp:main`).
-   - This is the future extension point for per-frame analysis.
+3. Topology + trajectory invocation (NetCDF, multi-backend topology)
+   - Form: `watpocket <topology.{pdb|cif|mmcif|parm7|prmtop}> <trajectory.nc> --resnums ... -o output.csv [-d hull_models.pdb]`.
+   - Call spine:
+```text
+main
+  -> parse_residue_selectors
+  -> require `-o/--output` path
+  -> validate optional `--draw` (trajectory accepts `.pdb` only)
+  -> load topology backend (chemfiles frame or parm7 parser)
+  -> resolve_ca_atom_indices + collect_water_oxygen_refs
+  -> sanity read trajectory frame 0 and atom-count check
+  -> trajectory.set_topology(topology) for non-parm7 only
+  -> per-frame: points_from_atom_indices -> compute_hull_data -> find_waters_inside_hull (frame-local try/catch)
+  -> write_csv_row on success
+  -> optional write_hull_pdb_model on success
+  -> warning to stderr and continue on frame-local geometry/classification failure
+  -> write_trajectory_statistics (stdout summary)
+```
 
 ### Cross-cutting concerns
 - Correctness (units/PBC): no coordinate transforms or unit conversion implemented; correctness assumes input coordinates are directly suitable for hull geometry (source: `src/watpocket/main.cpp`).
 - Geometry robustness: explicit degeneracy guards + exact-predicate kernel + face-orientation correction (source: `src/watpocket/main.cpp:are_all_collinear`, `are_all_coplanar`, `compute_hull_data`).
 - Determinism: uses deterministic containers/sorting for output IDs and deduplicated edges (`std::set`, `std::sort`, `std::unique`) (source: `src/watpocket/main.cpp:compute_hull_data`, `find_waters_inside_hull`).
-- Performance: single-threaded loops; no frame streaming yet (source: `src/watpocket/main.cpp`).
-- Error reporting: exceptions converted to `stderr` error lines with process exit code 1 (source: `src/watpocket/main.cpp:main`).
+- Performance: single-threaded loops; trajectory mode streams frames sequentially without cross-frame result accumulation (source: `src/watpocket/main.cpp:main`).
+- Error reporting: fatal setup/IO exceptions are converted to `stderr` errors with exit code 1, while trajectory frame-local hull/classification failures emit warnings and are skipped (source: `src/watpocket/main.cpp:main`).
 
 ## 3. Domain Data Model
 ### Chemical view
 - `ResidueSelector` encodes requested residue as optional chain + residue id from `--resnums` CSV tokens (source: `src/watpocket/main.cpp:ResidueSelector`, `parse_selector_token`).
 - `ResidueLookup` indexes topology residues by `(chain,id)` and by `id` only, and tracks set of observed chains (source: `src/watpocket/main.cpp:ResidueLookup`, `build_residue_lookup`).
-- Water molecule proxy model is oxygen atom hits belonging to residues whose resname is in `{HOH,WAT,TIP3,TIP3P,SPC,SPCE}` and atom name in `{O,OW}` (source: `src/watpocket/main.cpp:collect_water_oxygens`).
+- `Parm7Topology` stores only topology data needed by watpocket trajectory mode: atom names, residue labels, residue pointers/ranges, atom-to-residue map, and optional `RESIDUE_CHAINID` values (source: `src/watpocket/main.cpp:Parm7Topology`, `parse_parm7_topology`).
+- Water molecule proxy model is oxygen atom refs (`resid`, `atom_index`) built from topology residues whose resname is in `{HOH,WAT,TIP3,TIP3P,SPC,SPCE}` and atom name in `{O,OW}` (source: `src/watpocket/main.cpp:collect_water_oxygen_refs`).
 - Ligand-specific identity rules are not present in current implementation.
 
 ### Trajectory view
-- CLI allows either one structure input or two files (`<topology> <trajectory>`), but only one-file path is implemented (source: `src/watpocket/main.cpp:main`).
-- Runtime processing model is single-frame: `trajectory.read()` once, then all analysis on that frame (source: `src/watpocket/main.cpp:main`).
+- CLI allows either one structure input or two files (`<topology> <trajectory>`); two-file path currently supports NetCDF (`.nc`) trajectories with topology from either chemfiles-readable structure or `parm7/prmtop`. Single-input mode rejects `parm7/prmtop` explicitly because these files do not provide coordinates (source: `src/watpocket/main.cpp:main`, `is_netcdf_trajectory_path`, `is_parm7_topology_path`).
+- Runtime processing model:
+  - structure mode: `trajectory.read()` once
+  - trajectory mode: requires `-o`, loops until `trajectory.done()`, recomputes hull + water classification per frame, writes CSV rows on successful frames, optionally writes draw `MODEL` blocks when `-d .pdb` is provided, warns/skips on frame-local compute failures, and prints aggregate stats to stdout after the loop (source: `src/watpocket/main.cpp:main`, `write_trajectory_statistics`, `write_hull_pdb_model`).
 - Frame/time metadata are currently ignored.
 
 ### Geometry view
@@ -176,7 +236,7 @@ main
   - `Plane3` for inward halfspaces (source: `src/watpocket/main.cpp:Point3`, `Mesh`, `Plane3`, `compute_hull_data`).
 - Mapping:
   - residue selector -> unique residue -> CA atom index -> `Point3`
-  - classified water oxygen points -> residue IDs -> CLI/PyMOL outputs (source: `src/watpocket/main.cpp:resolve_ca_points`, `collect_water_oxygens`, `find_waters_inside_hull`).
+  - classified water oxygen points -> residue IDs -> structure stdout/PyMOL or trajectory CSV outputs (source: `src/watpocket/main.cpp:resolve_ca_atom_indices`, `collect_water_oxygen_refs`, `find_waters_inside_hull`, `write_csv_row`).
 
 ### Metadata/properties
 - Chain ID extraction uses residue string properties `chainid` first, then `chainname`, else empty string (source: `src/watpocket/main.cpp:residue_chain_id`).
@@ -189,21 +249,22 @@ main
   - parse each token as `RESID` or `CHAIN:RESID`
   - reject malformed values (source: `src/watpocket/main.cpp:parse_residue_selectors`, `parse_selector_token`, `parse_int64`).
 - Matching behavior:
-  - multichain topology requires explicit chain-qualified selectors
+  - chemfiles topology: multichain inputs require explicit chain-qualified selectors
+  - parm7 topology: residue IDs are 1..NRES; chain-qualified selectors are allowed only if `RESIDUE_CHAINID` section exists
   - missing residue or non-unique residue match is an error
-  - each selected residue must contain exactly one `CA` atom (source: `src/watpocket/main.cpp:resolve_ca_points`, `find_ca_atom_index`).
+  - each selected residue must contain exactly one `CA` atom (source: `src/watpocket/main.cpp:resolve_ca_atom_indices`, `find_ca_atom_index`).
 
 ### Coordinate preprocessing (PBC/alignment/units)
-- No wrap/unwrap/reimage/alignment/centering stage currently exists; positions are consumed as-is from `frame.positions()` (source: `src/watpocket/main.cpp:resolve_ca_points`, `collect_water_oxygens`).
+- No wrap/unwrap/reimage/alignment/centering stage currently exists; positions are consumed as-is from `frame.positions()` (source: `src/watpocket/main.cpp:points_from_atom_indices`, `materialize_water_oxygens`).
 - No explicit unit conversion is applied in code.
 
 ### Invariants after preprocessing
 - Selector list is non-empty and syntactically valid (source: `src/watpocket/main.cpp:parse_residue_selectors`).
-- Selected points correspond to exactly one CA atom per requested residue (source: `src/watpocket/main.cpp:resolve_ca_points`, `find_ca_atom_index`).
+- Selected points correspond to exactly one CA atom per requested residue (source: `src/watpocket/main.cpp:resolve_ca_atom_indices`, `find_ca_atom_index`).
 - Before geometry build: at least four points, non-collinear, non-coplanar (source: `src/watpocket/main.cpp:compute_hull_data`).
 
 ## 5. Geometry System (CGAL)
-### Library boundary diagram (chemfiles ↔ adapters ↔ CGAL)
+### Library boundary diagram (chemfiles/parm7 parser ↔ adapters ↔ CGAL)
 ```mermaid
 flowchart LR
   subgraph CHEM[chemfiles]
@@ -214,11 +275,17 @@ flowchart LR
     Prop[Residue properties\n`chainid`/`chainname`]
   end
 
+  subgraph PARM7[parm7 text parser]
+    PFile[parm7 file]
+    PSec[%FLAG/%FORMAT sections]
+    PTopo[Minimal topology:\natom names, residue labels,\nresidue pointers, chain ids]
+  end
+
   subgraph APP[watpocket adapters (`src/watpocket/main.cpp`)]
     Parse[Selector parsing\n`parse_residue_selectors()`]
     Lookup[Residue maps\n`build_residue_lookup()`]
-    CA[CA extraction\n`find_ca_atom_index()`]
-    Water[Water oxygen extraction\n`collect_water_oxygens()`]
+    CA[CA extraction\n`resolve_ca_atom_indices()`]
+    Water[Water refs + materialization\n`collect_water_oxygen_refs()`]
     Classify[Hull membership\n`point_inside_or_on_hull()`]
   end
 
@@ -232,8 +299,10 @@ flowchart LR
   T --> F --> Top
   F --> Pos
   Top --> Prop
+  PFile --> PSec --> PTopo
 
   Top --> Lookup
+  PTopo --> Lookup
   Pos --> CA
   Parse --> CA
   Pos --> Water
@@ -262,12 +331,17 @@ flowchart LR
 - No BVH/AABB/KD-tree/triangulation acceleration structures are currently used.
 
 ### Mapping between geometric entities and atoms/residues
-- CA mapping is direct residue-to-atom index traversal over Chemfiles `Residue` atom indices (source: `src/watpocket/main.cpp:find_ca_atom_index`, `resolve_ca_points`).
+- CA mapping uses topology backend-specific traversal:
+  - chemfiles path: iterate `Residue` atom indices
+  - parm7 path: iterate residue atom ranges from `RESIDUE_POINTER` (source: `src/watpocket/main.cpp:find_ca_atom_index`, `resolve_ca_atom_indices`).
 - Water mapping returns residue IDs, not atom indices; duplicates are removed via `std::set` (source: `src/watpocket/main.cpp:find_waters_inside_hull`).
 
 ### Common pitfalls + debugging notes
-- User must supply chain-qualified selectors when topology has multiple chains, else hard error (source: `src/watpocket/main.cpp:resolve_ca_points`).
-- `-d/--draw` requires drawable structure extension; otherwise error (source: `src/watpocket/main.cpp:main`, `is_drawable_structure_path`).
+- Chemfiles path: user must supply chain-qualified selectors when topology has multiple chains, else hard error.
+- Parm7 path: chain-qualified selectors error if `RESIDUE_CHAINID` is absent (source: `src/watpocket/main.cpp:resolve_ca_atom_indices`).
+- `parm7/prmtop` is trajectory-topology-only input; using it as the sole positional argument is a hard error (source: `src/watpocket/main.cpp:main`).
+- `-d/--draw` output extension must be `.py` or `.pdb`; in trajectory mode only `.pdb` is allowed, while `.py` additionally requires single-structure PDB/CIF input (source: `src/watpocket/main.cpp:main`, `is_drawable_structure_path`, `is_pymol_draw_output_path`, `is_pdb_draw_output_path`).
+- `-o/--output` is required in trajectory mode and invalid in single-structure mode (source: `src/watpocket/main.cpp:main`).
 - Boundary points count as inside by design (source: `src/watpocket/main.cpp:point_inside_or_on_hull`).
 - Selection parser is strict integer parsing and fails on malformed tokens/spaces around empty fields (source: `src/watpocket/main.cpp:parse_int64`, `parse_selector_token`).
 
@@ -277,13 +351,13 @@ flowchart LR
   - Build 3D hull from user-selected residues and extract line segments + face halfspaces.
   - Outputs: `HullData.edges`, `HullData.halfspaces` (source: `src/watpocket/main.cpp:compute_hull_data`).
 - Key files + symbols:
-  - `src/watpocket/main.cpp`: `resolve_ca_points`, `are_all_collinear`, `are_all_coplanar`, `compute_hull_data`.
+  - `src/watpocket/main.cpp`: `resolve_ca_atom_indices`, `points_from_atom_indices`, `are_all_collinear`, `are_all_coplanar`, `compute_hull_data`.
 - Inputs required:
-  - Structure frame with topology, valid residue IDs, and one `CA` per selected residue.
+  - Valid topology metadata (chemfiles frame or parsed parm7) to resolve CA indices, plus frame coordinates for each analyzed step.
 - Correctness notes:
   - Fails for `<4` or degenerate geometry; uses EPIK kernel and oriented-plane normalization.
 - Performance notes:
-  - `resolve_ca_points` scales with selected residues and lookup map operations.
+  - `resolve_ca_atom_indices` scales with selected residues and lookup map operations.
   - `compute_hull_data` cost dominated by `convex_hull_3` + mesh traversals.
 - Extension points:
   - Replace or augment hull with alpha-shape/AABB-based analyses while reusing CA extraction.
@@ -291,31 +365,38 @@ flowchart LR
 ### Analysis B: Water oxygen inside-hull classification
 - Purpose and outputs:
   - Identify water residues with oxygen atoms inside or on hull boundary; return sorted residue IDs.
-  - Outputs printed to stdout and used in PyMOL selection (source: `src/watpocket/main.cpp:collect_water_oxygens`, `find_waters_inside_hull`, `main`).
+  - Outputs are printed for structure mode and serialized to CSV per frame for trajectory mode; trajectory mode additionally emits aggregate stdout statistics after all frames (source: `src/watpocket/main.cpp:collect_water_oxygen_refs`, `find_waters_inside_hull`, `write_csv_row`, `write_trajectory_statistics`, `main`).
 - Key files + symbols:
-  - `src/watpocket/main.cpp`: `collect_water_oxygens`, `point_inside_or_on_hull`, `find_waters_inside_hull`, `join_residue_ids`, `make_pymol_resi_selector`.
+  - `src/watpocket/main.cpp`: `collect_water_oxygen_refs`, `materialize_water_oxygens`, `point_inside_or_on_hull`, `find_waters_inside_hull`, `write_csv_row`.
 - Inputs required:
-  - Single structure frame currently; trajectory path not yet implemented.
+  - Structure frame (single mode) or topology-derived atom refs + trajectory frame loop (NetCDF mode), where topology may come from chemfiles or parsed parm7.
 - Correctness notes:
   - Water definition is heuristic on residue + atom names.
   - Multiple oxygens in one residue are collapsed to one residue ID by `std::set`.
 - Performance notes:
-  - Full scan over topology residues and candidate atoms; each candidate tested against all hull planes.
+  - Water oxygen refs are cached once from topology in trajectory mode; each frame still tests candidates against all hull planes.
 - Extension points:
-  - Chain-aware water output, alternative solvent definitions, per-frame accumulation for trajectories.
+  - Chain-aware water output and support for additional trajectory formats (XTC/DCD).
 
-### Analysis C: PyMOL script generation (visual artifact)
+### Analysis C: Draw artifact generation (visual artifact)
 - Purpose and outputs:
-  - Emit executable PyMOL Python script loading structure, drawing hull as CGO lines, and highlighting `watpocket` waters.
-  - Output file path comes from `-d/--draw` (source: `src/watpocket/main.cpp:write_pymol_script`, `main`).
+  - Emit output controlled by `-d/--draw` extension:
+    - single-structure `.py`: PyMOL Python script loading structure, drawing hull as CGO lines, and highlighting `watpocket` waters.
+    - single-structure `.pdb`: hull PDB where vertices are `ANA` atoms, edges are `CONECT` bonds, and inside-hull waters are appended.
+    - trajectory `.pdb`: multi-model hull PDB where each successful frame contributes one `MODEL ... ENDMDL` block with inside-hull waters appended.
+  - Output file path comes from `-d/--draw`; trajectory mode accepts `.pdb` only (source: `src/watpocket/main.cpp:write_pymol_script`, `write_hull_pdb`, `write_hull_pdb_model`, `main`).
 - Key files + symbols:
-  - `src/watpocket/main.cpp`: `write_pymol_script`, `python_quoted`, `make_pymol_resi_selector`.
+  - `src/watpocket/main.cpp`: `write_pymol_script`, `write_hull_pdb`, `write_hull_pdb_model`, `write_hull_pdb_records`, `collect_water_atoms_for_pdb`, `write_pdb_atom_record`, `python_quoted`, `make_pymol_resi_selector`.
 - Inputs required:
-  - Single input file with extension `.pdb`/`.cif`/`.mmcif` + computed hull + classified water IDs.
+  - `.py`: single input file with extension `.pdb`/`.cif`/`.mmcif` + computed hull + classified water IDs.
+  - single-structure `.pdb`: computed hull (`HullData.vertices` + `HullData.bonds`).
+  - trajectory `.pdb`: per-frame computed hull (`HullData.vertices` + `HullData.bonds`) with frame-index model serial.
 - Correctness notes:
-  - Script creates fixed selection name `watpocket` and hides all solvent except selected waters.
+  - `.py` script creates fixed selection name `watpocket` and hides all solvent except selected waters.
+  - `.pdb` output uses fixed-column PDB `ATOM` records (coordinates in columns 31-54), 1-based atom serials, deduplicated adjacency for `CONECT` (hull bonds), and appends any inside-hull water residues as standard atom records.
+  - Trajectory-mode `.pdb` writes one model per successful frame; skipped frames emit warnings to stderr and no model.
 - Performance notes:
-  - Linear in number of hull edges written; negligible relative to IO/hull for typical sizes.
+  - Linear in hull edge count for `.py` and hull vertex+edge count for `.pdb`; trajectory `.pdb` adds sequential write overhead per successful frame.
 - Extension points:
   - Add optional faces/surfaces, per-frame snapshots, or additional named selections.
 
@@ -329,11 +410,11 @@ flowchart LR
 - Floating-point values in script are formatted with fixed precision 4 decimals (source: `src/watpocket/main.cpp:write_pymol_script`).
 
 ### Memory/layout strategy and caching
-- Transient vectors/maps are allocated per invocation (`ResidueLookup`, point vectors, edge vectors, halfspaces); no persistent cache across runs (source: `src/watpocket/main.cpp`).
-- Chemfiles frame is read once and held in memory for all analysis.
+- Transient vectors/maps are allocated per invocation (`ResidueLookup`, point vectors, edge vectors, halfspaces); trajectory mode additionally caches CA atom indices and water oxygen atom refs from topology once (source: `src/watpocket/main.cpp`).
+- Structure mode reads one frame; trajectory mode reads one frame at a time, emits CSV rows incrementally, and accumulates frame-level summary counters for final statistics.
 
 ### I/O vs compute overlap
-- No overlap or streaming pipeline exists; steps are strictly sequential in `main()`.
+- No overlap exists, but trajectory mode is frame-streaming and strictly sequential in `main()`.
 
 ### Benchmark harness and profiling hooks
 - No dedicated watpocket benchmark targets found.
@@ -351,7 +432,18 @@ flowchart LR
 ### Test strategy
 - CLI smoke tests:
   - `watpocket --help`
-  - `watpocket --version` regex check (source: `test/CMakeLists.txt`).
+  - `watpocket --version` regex check
+  - single-structure draw artifacts:
+    - `--draw` rejects unknown output extension
+    - `--draw` with `.pdb` writes hull PDB output
+  - trajectory draw artifacts:
+    - trajectory `--draw .pdb` writes model PDB output
+    - trajectory `--draw .py` is rejected
+  - trajectory-mode contract:
+    - missing `-o` in trajectory mode should fail
+  - `parm7` guardrails:
+    - single-input `parm7` should fail with trajectory-mode guidance
+    - chain-qualified selectors on `parm7` without `RESIDUE_CHAINID` should fail (source: `test/CMakeLists.txt`).
 - Unit tests currently target template `sample_library` factorial logic only (source: `test/tests.cpp`, `test/constexpr_tests.cpp`).
 - No repository-native automated test currently validates hull/water logic on `tests/data/wcn` sample input; those are manual workflow artifacts (`run.sh`, `sal.py`).
 
@@ -368,15 +460,15 @@ flowchart LR
 - To validate packaging/version metadata path:
   - Run `watpocket --version` (value comes from generated configured header) (source: `configured_files/config.hpp.in`, `src/watpocket/main.cpp:main`).
 - For geometry correctness debugging:
-  - Use `-d/--draw` to emit script and inspect hull edges + selected waters in PyMOL (source: `src/watpocket/main.cpp:write_pymol_script`).
+  - Use `-d/--draw` to emit script (`.py`, single-structure) or model PDB (`.pdb`, including trajectory mode) for viewer inspection (source: `src/watpocket/main.cpp:write_pymol_script`, `write_hull_pdb`, `write_hull_pdb_model`).
 
 ## 9. Change Playbooks (Practical Guides)
 ### Add a new analysis over trajectories
-1. Implement 2-input branch in `main()` by replacing current throw with topology+trajectory frame loop (`chemfiles::Trajectory` for trajectory, `set_topology`/topology handling as needed).
-2. Keep existing selector parsing and CA extraction reusable for each frame.
-3. Decide output strategy (per-frame IDs, aggregated IDs, or time series file).
-4. Add regression tests with known trajectory fixtures and expected outputs.
-5. Preserve single-structure behavior and error contracts.
+1. Reuse the existing 2-input branch in `main()` (topology + trajectory frame loop).
+2. If adding new formats, expand `is_netcdf_trajectory_path` gating and keep topology atom-count sanity checks.
+3. Keep selector parsing, CA index caching, and water-ref caching reusable for each frame.
+4. Decide output strategy (extend CSV schema or add new serializer).
+5. Preserve single-structure behavior and current error contracts.
 
 ### Add a new CGAL-based geometry computation
 1. Add a geometry helper next to `compute_hull_data()` in `src/watpocket/main.cpp` (or split into new `src/watpocket/*.cpp` module if refactoring).
@@ -405,13 +497,17 @@ flowchart LR
 
 ## 10. Index: Symbols → Files
 - `main` → `src/watpocket/main.cpp`: CLI orchestration and execution spine.
+- `parse_parm7_sections` / `parse_parm7_topology` → `src/watpocket/main.cpp`: minimal Amber topology parser for trajectory mode.
 - `parse_selector_token` / `parse_residue_selectors` → `src/watpocket/main.cpp`: custom residue selector parser.
 - `residue_chain_id` / `build_residue_lookup` → `src/watpocket/main.cpp`: topology indexing by chain/id.
-- `find_ca_atom_index` / `resolve_ca_points` → `src/watpocket/main.cpp`: CA extraction and selector resolution.
+- `find_ca_atom_index` / `resolve_ca_atom_indices` / `resolve_ca_points` → `src/watpocket/main.cpp`: CA extraction and selector resolution.
 - `are_all_collinear` / `are_all_coplanar` → `src/watpocket/main.cpp`: degeneracy checks.
 - `compute_hull_data` → `src/watpocket/main.cpp`: convex hull, edge extraction, halfspace build.
 - `point_inside_or_on_hull` → `src/watpocket/main.cpp`: halfspace inclusion test.
-- `collect_water_oxygens` / `find_waters_inside_hull` → `src/watpocket/main.cpp`: solvent filtering and pocket classification.
+- `collect_water_oxygen_refs` / `materialize_water_oxygens` / `find_waters_inside_hull` → `src/watpocket/main.cpp`: solvent filtering and pocket classification.
+- `write_csv_header` / `write_csv_row` → `src/watpocket/main.cpp`: trajectory CSV serialization.
+- `write_trajectory_statistics` → `src/watpocket/main.cpp`: trajectory aggregate stats printer.
+- `write_hull_pdb` / `write_hull_pdb_model` / `write_hull_pdb_records` / `collect_water_atoms_for_pdb` → `src/watpocket/main.cpp`: PDB serializers for hull geometry and inside-hull waters in single-frame and trajectory-model outputs.
 - `write_pymol_script` → `src/watpocket/main.cpp`: PyMOL script emitter.
 - `myproject_setup_dependencies` → `Dependencies.cmake`: dependency wiring (CPM + vendored Chemfiles/CGAL).
 - `myproject_setup_options` / `myproject_local_options` → `ProjectOptions.cmake`: feature toggles, sanitizers/analyzers/cache integration.

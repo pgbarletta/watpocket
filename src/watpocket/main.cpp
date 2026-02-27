@@ -12,10 +12,14 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <optional>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -63,6 +67,8 @@ struct ResidueLookup {
 };
 
 struct HullData {
+  std::vector<std::array<double, 3>> vertices;
+  std::vector<std::pair<std::size_t, std::size_t>> bonds;
   std::vector<std::array<double, 6>> edges;
   std::vector<Plane3> halfspaces;
 };
@@ -70,6 +76,40 @@ struct HullData {
 struct WaterOxygen {
   std::int64_t resid = 0;
   Point3 position;
+};
+
+struct WaterOxygenRef {
+  std::int64_t resid = 0;
+  std::size_t atom_index = 0;
+};
+
+struct PdbAtomRecord {
+  std::string atom_name;
+  std::string residue_name;
+  std::string chain_id;
+  std::int64_t residue_id = 0;
+  std::array<double, 3> position{ 0.0, 0.0, 0.0 };
+  std::string element;
+};
+
+struct Parm7FormatSpec {
+  char type = '\0';
+  std::size_t width = 0;
+};
+
+struct Parm7Section {
+  Parm7FormatSpec format;
+  std::vector<std::string> lines;
+};
+
+struct Parm7Topology {
+  std::vector<std::string> atom_names;
+  std::vector<std::string> residue_labels;
+  std::vector<std::size_t> residue_pointers;
+  std::vector<std::size_t> residue_end_offsets;
+  std::vector<std::size_t> atom_to_residue_index;
+  std::vector<std::string> residue_chain_ids;
+  bool has_residue_chain_ids = false;
 };
 
 std::string trim_copy(const std::string& input)
@@ -113,6 +153,276 @@ std::int64_t parse_int64(const std::string& text)
   } catch (const std::exception&) {
     throw std::runtime_error("invalid integer: '" + text + "'");
   }
+}
+
+Parm7FormatSpec parse_parm7_format_line(const std::string& line)
+{
+  static const std::regex pattern(R"(\(\s*\d+\s*([A-Za-z])\s*(\d+)(?:\.\d+)?\s*\))");
+  std::smatch match;
+
+  if (!std::regex_search(line, match, pattern)) {
+    throw std::runtime_error("invalid parm7 %FORMAT line: '" + line + "'");
+  }
+
+  const auto type = static_cast<char>(std::tolower(static_cast<unsigned char>(match[1].str().front())));
+  const auto width = std::stoul(match[2].str());
+  if (width == 0U) {
+    throw std::runtime_error("invalid parm7 %FORMAT width in line: '" + line + "'");
+  }
+
+  return Parm7FormatSpec{ type, width };
+}
+
+std::vector<std::string> decode_parm7_string_fields(const Parm7Section& section)
+{
+  std::vector<std::string> values;
+  values.reserve(section.lines.size() * 4U);
+
+  const auto width = section.format.width;
+  for (const auto& line : section.lines) {
+    for (std::size_t offset = 0; offset < line.size(); offset += width) {
+      const auto count = std::min(width, line.size() - offset);
+      values.push_back(trim_copy(line.substr(offset, count)));
+    }
+  }
+
+  return values;
+}
+
+std::vector<std::int64_t> decode_parm7_integer_fields(const Parm7Section& section)
+{
+  std::vector<std::int64_t> values;
+  values.reserve(section.lines.size() * 4U);
+
+  const auto width = section.format.width;
+  for (const auto& line : section.lines) {
+    for (std::size_t offset = 0; offset < line.size(); offset += width) {
+      const auto count = std::min(width, line.size() - offset);
+      const auto token = trim_copy(line.substr(offset, count));
+      if (token.empty()) {
+        continue;
+      }
+      values.push_back(parse_int64(token));
+    }
+  }
+
+  return values;
+}
+
+const Parm7Section& require_parm7_section(const std::unordered_map<std::string, Parm7Section>& sections,
+                                          const std::string& section_name)
+{
+  const auto iterator = sections.find(section_name);
+  if (iterator == sections.end()) {
+    throw std::runtime_error("parm7 section '" + section_name + "' is missing");
+  }
+  return iterator->second;
+}
+
+std::vector<std::string> parse_parm7_string_section(const std::unordered_map<std::string, Parm7Section>& sections,
+                                                    const std::string& section_name,
+                                                    const std::size_t expected_count)
+{
+  const auto& section = require_parm7_section(sections, section_name);
+  if (section.format.type != 'a') {
+    throw std::runtime_error("parm7 section '" + section_name
+                             + "' has unexpected format type; expected character ('a')");
+  }
+
+  auto values = decode_parm7_string_fields(section);
+  if (values.size() < expected_count) {
+    throw std::runtime_error("parm7 section '" + section_name + "' has " + std::to_string(values.size())
+                             + " values, expected at least " + std::to_string(expected_count));
+  }
+
+  if (values.size() > expected_count) {
+    for (std::size_t i = expected_count; i < values.size(); ++i) {
+      if (!values[i].empty()) {
+        throw std::runtime_error("parm7 section '" + section_name + "' has unexpected extra values");
+      }
+    }
+    values.resize(expected_count);
+  }
+
+  return values;
+}
+
+std::vector<std::int64_t> parse_parm7_integer_section(const std::unordered_map<std::string, Parm7Section>& sections,
+                                                      const std::string& section_name,
+                                                      const std::size_t expected_min_count)
+{
+  const auto& section = require_parm7_section(sections, section_name);
+  if (section.format.type != 'i') {
+    throw std::runtime_error("parm7 section '" + section_name
+                             + "' has unexpected format type; expected integer ('i')");
+  }
+
+  auto values = decode_parm7_integer_fields(section);
+  if (values.size() < expected_min_count) {
+    throw std::runtime_error("parm7 section '" + section_name + "' has " + std::to_string(values.size())
+                             + " values, expected at least " + std::to_string(expected_min_count));
+  }
+
+  return values;
+}
+
+std::unordered_map<std::string, Parm7Section> parse_parm7_sections(const std::filesystem::path& path)
+{
+  std::ifstream input(path);
+  if (!input) {
+    throw std::runtime_error("could not open parm7 topology file '" + path.string() + "'");
+  }
+
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(input, line)) {
+    lines.push_back(line);
+  }
+
+  std::unordered_map<std::string, Parm7Section> sections;
+  std::size_t index = 0;
+  while (index < lines.size()) {
+    const auto line_view = trim_copy(lines[index]);
+    if (line_view.rfind("%FLAG", 0) != 0) {
+      ++index;
+      continue;
+    }
+
+    const auto section_name = trim_copy(lines[index].substr(5));
+    ++index;
+
+    while (index < lines.size()) {
+      const auto next_line = trim_copy(lines[index]);
+      if (next_line.empty() || next_line.rfind("%COMMENT", 0) == 0) {
+        ++index;
+        continue;
+      }
+      break;
+    }
+
+    if (index >= lines.size()) {
+      throw std::runtime_error("unexpected end of parm7 file after %FLAG " + section_name);
+    }
+
+    const auto format_line = trim_copy(lines[index]);
+    if (format_line.rfind("%FORMAT", 0) != 0) {
+      throw std::runtime_error("expected %FORMAT after %FLAG " + section_name);
+    }
+
+    Parm7Section section{ parse_parm7_format_line(format_line), {} };
+    ++index;
+
+    while (index < lines.size() && trim_copy(lines[index]).rfind("%FLAG", 0) != 0) {
+      section.lines.push_back(lines[index]);
+      ++index;
+    }
+
+    sections[section_name] = std::move(section);
+  }
+
+  if (sections.empty()) {
+    throw std::runtime_error("no %FLAG sections found in parm7 file '" + path.string() + "'");
+  }
+
+  return sections;
+}
+
+Parm7Topology parse_parm7_topology(const std::filesystem::path& path)
+{
+  constexpr std::size_t pointers_minimum_size = 12U; // NATOM through NRES
+  constexpr std::size_t natom_index = 0U;
+  constexpr std::size_t nres_index = 11U;
+
+  const auto sections = parse_parm7_sections(path);
+  const auto pointers = parse_parm7_integer_section(sections, "POINTERS", pointers_minimum_size);
+
+  const auto natom_raw = pointers.at(natom_index);
+  const auto nres_raw = pointers.at(nres_index);
+  if (natom_raw <= 0 || nres_raw <= 0) {
+    throw std::runtime_error("invalid NATOM/NRES values in parm7 POINTERS section");
+  }
+
+  const auto natom = static_cast<std::size_t>(natom_raw);
+  const auto nres = static_cast<std::size_t>(nres_raw);
+
+  Parm7Topology topology;
+  topology.atom_names = parse_parm7_string_section(sections, "ATOM_NAME", natom);
+  topology.residue_labels = parse_parm7_string_section(sections, "RESIDUE_LABEL", nres);
+
+  const auto residue_pointer_values = parse_parm7_integer_section(sections, "RESIDUE_POINTER", nres);
+  if (residue_pointer_values.size() != nres) {
+    throw std::runtime_error("parm7 RESIDUE_POINTER section has " + std::to_string(residue_pointer_values.size())
+                             + " values, expected " + std::to_string(nres));
+  }
+
+  topology.residue_pointers.reserve(nres);
+  for (const auto pointer_value : residue_pointer_values) {
+    if (pointer_value < 1 || pointer_value > static_cast<std::int64_t>(natom)) {
+      throw std::runtime_error("parm7 RESIDUE_POINTER contains out-of-range value "
+                               + std::to_string(pointer_value));
+    }
+    topology.residue_pointers.push_back(static_cast<std::size_t>(pointer_value - 1));
+  }
+
+  if (topology.residue_pointers.front() != 0U) {
+    throw std::runtime_error("parm7 RESIDUE_POINTER must start at atom index 1");
+  }
+
+  topology.residue_end_offsets.reserve(nres);
+  for (std::size_t residue_index = 0; residue_index < nres; ++residue_index) {
+    const auto start = topology.residue_pointers[residue_index];
+    const auto end = (residue_index + 1U < nres) ? topology.residue_pointers[residue_index + 1U] : natom;
+    if (end < start || end > natom) {
+      throw std::runtime_error("invalid atom range for residue index " + std::to_string(residue_index + 1U));
+    }
+    topology.residue_end_offsets.push_back(end);
+  }
+
+  topology.atom_to_residue_index.assign(natom, nres);
+  for (std::size_t residue_index = 0; residue_index < nres; ++residue_index) {
+    const auto start = topology.residue_pointers[residue_index];
+    const auto end = topology.residue_end_offsets[residue_index];
+    for (std::size_t atom_index = start; atom_index < end; ++atom_index) {
+      topology.atom_to_residue_index[atom_index] = residue_index;
+    }
+  }
+
+  for (std::size_t atom_index = 0; atom_index < natom; ++atom_index) {
+    if (topology.atom_to_residue_index[atom_index] == nres) {
+      throw std::runtime_error("atom index " + std::to_string(atom_index)
+                               + " is not assigned to any residue in parm7 topology");
+    }
+  }
+
+  if (const auto chain_section = sections.find("RESIDUE_CHAINID"); chain_section != sections.end()) {
+    if (chain_section->second.format.type != 'a') {
+      throw std::runtime_error(
+        "parm7 section 'RESIDUE_CHAINID' has unexpected format type; expected character ('a')");
+    }
+
+    auto residue_chain_ids = decode_parm7_string_fields(chain_section->second);
+    if (residue_chain_ids.size() < nres) {
+      throw std::runtime_error("parm7 section 'RESIDUE_CHAINID' has " + std::to_string(residue_chain_ids.size())
+                               + " values, expected at least " + std::to_string(nres));
+    }
+
+    if (residue_chain_ids.size() > nres) {
+      for (std::size_t i = nres; i < residue_chain_ids.size(); ++i) {
+        if (!residue_chain_ids[i].empty()) {
+          throw std::runtime_error("parm7 section 'RESIDUE_CHAINID' has unexpected extra values");
+        }
+      }
+      residue_chain_ids.resize(nres);
+    }
+
+    topology.residue_chain_ids = std::move(residue_chain_ids);
+    topology.has_residue_chain_ids = true;
+  } else {
+    topology.residue_chain_ids.assign(nres, "");
+    topology.has_residue_chain_ids = false;
+  }
+
+  return topology;
 }
 
 ResidueSelector parse_selector_token(const std::string& token)
@@ -220,7 +530,8 @@ std::size_t find_ca_atom_index(const chemfiles::Frame& frame, const chemfiles::R
   return *ca_atom_index;
 }
 
-std::vector<Point3> resolve_ca_points(const chemfiles::Frame& frame, const std::vector<ResidueSelector>& selectors)
+std::vector<std::size_t> resolve_ca_atom_indices(const chemfiles::Frame& frame,
+                                                 const std::vector<ResidueSelector>& selectors)
 {
   const auto& topology = frame.topology();
   const auto lookup = build_residue_lookup(topology);
@@ -235,9 +546,8 @@ std::vector<Point3> resolve_ca_points(const chemfiles::Frame& frame, const std::
     }
   }
 
-  const auto& positions = frame.positions();
-  std::vector<Point3> points;
-  points.reserve(selectors.size());
+  std::vector<std::size_t> atom_indices;
+  atom_indices.reserve(selectors.size());
 
   for (const auto& selector : selectors) {
     std::vector<std::size_t> matches;
@@ -273,11 +583,96 @@ std::vector<Point3> resolve_ca_points(const chemfiles::Frame& frame, const std::
       throw std::runtime_error("selector '" + selector_display(selector) + "': " + e.what());
     }
 
-    const auto& position = positions.at(ca_atom_index);
+    atom_indices.push_back(ca_atom_index);
+  }
+
+  return atom_indices;
+}
+
+std::size_t find_ca_atom_index(const Parm7Topology& topology, const std::size_t residue_index)
+{
+  std::optional<std::size_t> ca_atom_index;
+
+  const auto begin = topology.residue_pointers.at(residue_index);
+  const auto end = topology.residue_end_offsets.at(residue_index);
+
+  for (std::size_t atom_index = begin; atom_index < end; ++atom_index) {
+    if (uppercase_copy(topology.atom_names.at(atom_index)) == "CA") {
+      if (ca_atom_index) {
+        throw std::runtime_error("residue has multiple 'CA' atoms");
+      }
+      ca_atom_index = atom_index;
+    }
+  }
+
+  if (!ca_atom_index) {
+    throw std::runtime_error("residue does not contain atom named 'CA'");
+  }
+
+  return *ca_atom_index;
+}
+
+std::vector<std::size_t> resolve_ca_atom_indices(const Parm7Topology& topology,
+                                                 const std::vector<ResidueSelector>& selectors)
+{
+  std::vector<std::size_t> atom_indices;
+  atom_indices.reserve(selectors.size());
+
+  const auto residue_count = topology.residue_labels.size();
+  for (const auto& selector : selectors) {
+    if (selector.chain && !topology.has_residue_chain_ids) {
+      throw std::runtime_error("selector '" + selector_display(selector)
+                               + "' uses chain syntax but parm7 topology has no RESIDUE_CHAINID section");
+    }
+
+    if (selector.resid < 1 || selector.resid > static_cast<std::int64_t>(residue_count)) {
+      throw std::runtime_error("could not find residue selector '" + selector_display(selector) + "'");
+    }
+
+    const auto residue_index = static_cast<std::size_t>(selector.resid - 1);
+    if (selector.chain) {
+      const auto& residue_chain_id = topology.residue_chain_ids.at(residue_index);
+      if (residue_chain_id != *selector.chain) {
+        throw std::runtime_error("could not find residue selector '" + selector_display(selector) + "'");
+      }
+    }
+
+    try {
+      atom_indices.push_back(find_ca_atom_index(topology, residue_index));
+    } catch (const std::exception& e) {
+      throw std::runtime_error("selector '" + selector_display(selector) + "': " + e.what());
+    }
+  }
+
+  return atom_indices;
+}
+
+std::vector<Point3> points_from_atom_indices(const chemfiles::Frame& frame,
+                                             const std::vector<std::size_t>& atom_indices,
+                                             const std::string& atom_role)
+{
+  const auto& positions = frame.positions();
+  std::vector<Point3> points;
+  points.reserve(atom_indices.size());
+
+  for (const auto atom_index : atom_indices) {
+    if (atom_index >= positions.size()) {
+      throw std::runtime_error(atom_role + " atom index " + std::to_string(atom_index)
+                               + " is out of bounds for frame with "
+                               + std::to_string(positions.size()) + " atoms");
+    }
+
+    const auto& position = positions.at(atom_index);
     points.emplace_back(position[0], position[1], position[2]);
   }
 
   return points;
+}
+
+std::vector<Point3> resolve_ca_points(const chemfiles::Frame& frame, const std::vector<ResidueSelector>& selectors)
+{
+  const auto atom_indices = resolve_ca_atom_indices(frame, selectors);
+  return points_from_atom_indices(frame, atom_indices, "selected C-alpha");
 }
 
 bool are_all_collinear(const std::vector<Point3>& points)
@@ -364,8 +759,37 @@ HullData compute_hull_data(const std::vector<Point3>& points)
   }
 
   HullData hull_data;
+
+  std::vector<std::pair<std::array<double, 3>, Mesh::Vertex_index>> ordered_vertices;
+  ordered_vertices.reserve(hull.number_of_vertices());
+  for (const auto vertex : hull.vertices()) {
+    const auto& point = hull.point(vertex);
+    ordered_vertices.push_back({ { CGAL::to_double(point.x()), CGAL::to_double(point.y()), CGAL::to_double(point.z()) },
+                                 vertex });
+  }
+
+  std::sort(
+    ordered_vertices.begin(),
+    ordered_vertices.end(),
+    [](const auto& lhs, const auto& rhs) {
+      if (lhs.first != rhs.first) {
+        return lhs.first < rhs.first;
+      }
+      return lhs.second.idx() < rhs.second.idx();
+    });
+
+  std::unordered_map<std::size_t, std::size_t> mesh_to_output_index;
+  mesh_to_output_index.reserve(ordered_vertices.size());
+  hull_data.vertices.reserve(ordered_vertices.size());
+  for (std::size_t index = 0; index < ordered_vertices.size(); ++index) {
+    hull_data.vertices.push_back(ordered_vertices[index].first);
+    mesh_to_output_index.emplace(ordered_vertices[index].second.idx(), index);
+  }
+
   std::vector<std::array<double, 6>> edges;
   edges.reserve(hull.number_of_edges());
+  std::vector<std::pair<std::size_t, std::size_t>> bonds;
+  bonds.reserve(hull.number_of_edges());
 
   for (const auto edge : hull.edges()) {
     const auto halfedge = hull.halfedge(edge);
@@ -387,10 +811,21 @@ HullData compute_hull_data(const std::vector<Point3>& points)
     }
 
     edges.push_back({ a[0], a[1], a[2], b[0], b[1], b[2] });
+
+    const auto source_key = source_vertex.idx();
+    const auto target_key = target_vertex.idx();
+    auto source_index = mesh_to_output_index.at(source_key);
+    auto target_index = mesh_to_output_index.at(target_key);
+    if (target_index < source_index) {
+      std::swap(source_index, target_index);
+    }
+    bonds.push_back({ source_index, target_index });
   }
 
   std::sort(edges.begin(), edges.end());
   edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+  std::sort(bonds.begin(), bonds.end());
+  bonds.erase(std::unique(bonds.begin(), bonds.end()), bonds.end());
 
   double sum_x = 0.0;
   double sum_y = 0.0;
@@ -425,6 +860,7 @@ HullData compute_hull_data(const std::vector<Point3>& points)
     halfspaces.push_back(plane);
   }
 
+  hull_data.bonds = std::move(bonds);
   hull_data.edges = std::move(edges);
   return hull_data;
 }
@@ -439,15 +875,14 @@ bool point_inside_or_on_hull(const Point3& point, const std::vector<Plane3>& hal
   return true;
 }
 
-std::vector<WaterOxygen> collect_water_oxygens(const chemfiles::Frame& frame)
+std::vector<WaterOxygenRef> collect_water_oxygen_refs(const chemfiles::Frame& frame)
 {
   static const std::set<std::string> water_resnames{ "HOH", "WAT", "TIP3", "TIP3P", "SPC", "SPCE" };
   static const std::set<std::string> water_oxygen_names{ "O", "OW" };
 
-  std::vector<WaterOxygen> waters;
+  std::vector<WaterOxygenRef> water_refs;
   const auto& topology = frame.topology();
   const auto& residues = topology.residues();
-  const auto& positions = frame.positions();
 
   for (const auto& residue : residues) {
     if (!residue.id()) {
@@ -463,13 +898,66 @@ std::vector<WaterOxygen> collect_water_oxygens(const chemfiles::Frame& frame)
         continue;
       }
 
-      const auto& position = positions.at(atom_index);
-      waters.push_back(
-        WaterOxygen{ *residue.id(), Point3(position[0], position[1], position[2]) });
+      water_refs.push_back(WaterOxygenRef{ *residue.id(), atom_index });
     }
   }
 
+  return water_refs;
+}
+
+std::vector<WaterOxygenRef> collect_water_oxygen_refs(const Parm7Topology& topology)
+{
+  static const std::set<std::string> water_resnames{ "HOH", "WAT", "TIP3", "TIP3P", "SPC", "SPCE" };
+  static const std::set<std::string> water_oxygen_names{ "O", "OW" };
+
+  std::vector<WaterOxygenRef> water_refs;
+  const auto residue_count = topology.residue_labels.size();
+
+  for (std::size_t residue_index = 0; residue_index < residue_count; ++residue_index) {
+    if (water_resnames.count(uppercase_copy(topology.residue_labels[residue_index])) == 0U) {
+      continue;
+    }
+
+    const auto residue_id = static_cast<std::int64_t>(residue_index + 1U);
+    const auto begin = topology.residue_pointers[residue_index];
+    const auto end = topology.residue_end_offsets[residue_index];
+    for (std::size_t atom_index = begin; atom_index < end; ++atom_index) {
+      if (water_oxygen_names.count(uppercase_copy(topology.atom_names[atom_index])) == 0U) {
+        continue;
+      }
+
+      water_refs.push_back(WaterOxygenRef{ residue_id, atom_index });
+    }
+  }
+
+  return water_refs;
+}
+
+std::vector<WaterOxygen> materialize_water_oxygens(const chemfiles::Frame& frame,
+                                                   const std::vector<WaterOxygenRef>& water_refs)
+{
+  std::vector<WaterOxygen> waters;
+  waters.reserve(water_refs.size());
+  const auto& positions = frame.positions();
+
+  for (const auto& water_ref : water_refs) {
+    if (water_ref.atom_index >= positions.size()) {
+      throw std::runtime_error("water oxygen atom index " + std::to_string(water_ref.atom_index)
+                               + " is out of bounds for frame with "
+                               + std::to_string(positions.size()) + " atoms");
+    }
+
+    const auto& position = positions.at(water_ref.atom_index);
+    waters.push_back(WaterOxygen{ water_ref.resid, Point3(position[0], position[1], position[2]) });
+  }
+
   return waters;
+}
+
+std::vector<WaterOxygen> collect_water_oxygens(const chemfiles::Frame& frame)
+{
+  const auto water_refs = collect_water_oxygen_refs(frame);
+  return materialize_water_oxygens(frame, water_refs);
 }
 
 std::vector<std::int64_t> find_waters_inside_hull(const chemfiles::Frame& frame, const HullData& hull_data)
@@ -484,6 +972,159 @@ std::vector<std::int64_t> find_waters_inside_hull(const chemfiles::Frame& frame,
   }
 
   return std::vector<std::int64_t>(residue_ids.begin(), residue_ids.end());
+}
+
+std::vector<std::int64_t> find_waters_inside_hull(const chemfiles::Frame& frame,
+                                                  const HullData& hull_data,
+                                                  const std::vector<WaterOxygenRef>& water_refs)
+{
+  std::set<std::int64_t> residue_ids;
+  const auto waters = materialize_water_oxygens(frame, water_refs);
+
+  for (const auto& water : waters) {
+    if (point_inside_or_on_hull(water.position, hull_data.halfspaces)) {
+      residue_ids.insert(water.resid);
+    }
+  }
+
+  return std::vector<std::int64_t>(residue_ids.begin(), residue_ids.end());
+}
+
+std::string normalize_pdb_field(const std::string& text, const std::size_t width)
+{
+  auto normalized = trim_copy(text);
+  if (normalized.size() > width) {
+    normalized.resize(width);
+  }
+  return normalized;
+}
+
+std::string guess_element_symbol(const std::string& atom_name)
+{
+  for (const char c : atom_name) {
+    if (std::isalpha(static_cast<unsigned char>(c))) {
+      return std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+  }
+  return "X";
+}
+
+void write_pdb_atom_record(std::ostream& out, const std::size_t serial, const PdbAtomRecord& atom)
+{
+  const auto atom_name = normalize_pdb_field(atom.atom_name, 4U);
+  const auto residue_name = normalize_pdb_field(atom.residue_name, 3U);
+  const auto chain_id = atom.chain_id.empty() ? " " : normalize_pdb_field(atom.chain_id, 1U);
+  const auto element = normalize_pdb_field(atom.element.empty() ? guess_element_symbol(atom.atom_name) : atom.element, 2U);
+
+  char atom_line[128];
+  std::snprintf(atom_line,
+                sizeof(atom_line),
+                "ATOM  %5zu %4s %3s %1s%4lld    %8.3f%8.3f%8.3f%6.2f%6.2f          %2s",
+                serial,
+                atom_name.c_str(),
+                residue_name.c_str(),
+                chain_id.c_str(),
+                static_cast<long long>(atom.residue_id),
+                atom.position[0],
+                atom.position[1],
+                atom.position[2],
+                1.00,
+                0.00,
+                element.c_str());
+  out << atom_line << '\n';
+}
+
+std::vector<PdbAtomRecord> collect_water_atoms_for_pdb(const chemfiles::Frame& frame,
+                                                       const std::vector<std::int64_t>& water_residue_ids)
+{
+  static const std::set<std::string> water_resnames{ "HOH", "WAT", "TIP3", "TIP3P", "SPC", "SPCE" };
+
+  std::vector<PdbAtomRecord> water_atoms;
+  if (water_residue_ids.empty()) {
+    return water_atoms;
+  }
+
+  const auto& residues = frame.topology().residues();
+  const auto& positions = frame.positions();
+  for (const auto& residue : residues) {
+    if (!residue.id()) {
+      continue;
+    }
+
+    const auto residue_id = *residue.id();
+    if (!std::binary_search(water_residue_ids.begin(), water_residue_ids.end(), residue_id)) {
+      continue;
+    }
+
+    const auto residue_name = residue.name();
+    if (water_resnames.count(uppercase_copy(residue_name)) == 0U) {
+      continue;
+    }
+
+    const auto chain_id = residue_chain_id(residue);
+    for (const auto atom_index : residue) {
+      if (atom_index >= positions.size()) {
+        throw std::runtime_error("water atom index " + std::to_string(atom_index)
+                                 + " is out of bounds for frame with "
+                                 + std::to_string(positions.size()) + " atoms");
+      }
+
+      const auto& position = positions.at(atom_index);
+      const auto atom_name = frame[atom_index].name();
+      water_atoms.push_back(PdbAtomRecord{ atom_name,
+                                           residue_name,
+                                           chain_id,
+                                           residue_id,
+                                           { position[0], position[1], position[2] },
+                                           guess_element_symbol(atom_name) });
+    }
+  }
+
+  return water_atoms;
+}
+
+std::vector<PdbAtomRecord> collect_water_atoms_for_pdb(const chemfiles::Frame& frame,
+                                                       const Parm7Topology& topology,
+                                                       const std::vector<std::int64_t>& water_residue_ids)
+{
+  std::vector<PdbAtomRecord> water_atoms;
+  if (water_residue_ids.empty()) {
+    return water_atoms;
+  }
+
+  const auto residue_count = topology.residue_labels.size();
+  const auto& positions = frame.positions();
+  for (const auto residue_id : water_residue_ids) {
+    if (residue_id < 1 || residue_id > static_cast<std::int64_t>(residue_count)) {
+      throw std::runtime_error("water residue id " + std::to_string(residue_id)
+                               + " is out of range for topology with "
+                               + std::to_string(residue_count) + " residues");
+    }
+
+    const auto residue_index = static_cast<std::size_t>(residue_id - 1);
+    const auto& residue_name = topology.residue_labels.at(residue_index);
+    const auto chain_id = topology.has_residue_chain_ids ? topology.residue_chain_ids.at(residue_index) : "";
+    const auto begin = topology.residue_pointers.at(residue_index);
+    const auto end = topology.residue_end_offsets.at(residue_index);
+    for (std::size_t atom_index = begin; atom_index < end; ++atom_index) {
+      if (atom_index >= positions.size()) {
+        throw std::runtime_error("water atom index " + std::to_string(atom_index)
+                                 + " is out of bounds for frame with "
+                                 + std::to_string(positions.size()) + " atoms");
+      }
+
+      const auto& atom_name = topology.atom_names.at(atom_index);
+      const auto& position = positions.at(atom_index);
+      water_atoms.push_back(PdbAtomRecord{ atom_name,
+                                           residue_name,
+                                           chain_id,
+                                           residue_id,
+                                           { position[0], position[1], position[2] },
+                                           guess_element_symbol(atom_name) });
+    }
+  }
+
+  return water_atoms;
 }
 
 std::string join_residue_ids(const std::vector<std::int64_t>& residue_ids, const char separator)
@@ -510,6 +1151,184 @@ bool is_drawable_structure_path(const std::filesystem::path& path)
 {
   const auto extension = lowercase_copy(path.extension().string());
   return extension == ".pdb" || extension == ".cif" || extension == ".mmcif";
+}
+
+bool is_pymol_draw_output_path(const std::filesystem::path& path)
+{
+  return lowercase_copy(path.extension().string()) == ".py";
+}
+
+bool is_pdb_draw_output_path(const std::filesystem::path& path)
+{
+  return lowercase_copy(path.extension().string()) == ".pdb";
+}
+
+bool is_netcdf_trajectory_path(const std::filesystem::path& path)
+{
+  const auto extension = lowercase_copy(path.extension().string());
+  return extension == ".nc";
+}
+
+bool is_parm7_topology_path(const std::filesystem::path& path)
+{
+  const auto extension = lowercase_copy(path.extension().string());
+  return extension == ".parm7" || extension == ".prmtop";
+}
+
+std::string csv_quoted(const std::string& text)
+{
+  std::string escaped;
+  escaped.reserve(text.size() + 8);
+
+  for (const char c : text) {
+    if (c == '"') {
+      escaped.push_back('"');
+    }
+    escaped.push_back(c);
+  }
+
+  return '"' + escaped + '"';
+}
+
+void write_csv_header(std::ostream& out) { out << "frame,resnums,total_count\n"; }
+
+void write_csv_row(std::ostream& out,
+                   const std::size_t frame_number,
+                   const std::vector<std::int64_t>& water_residue_ids)
+{
+  out << frame_number << ',' << csv_quoted(join_residue_ids(water_residue_ids, ' ')) << ','
+      << water_residue_ids.size() << '\n';
+}
+
+void write_trajectory_statistics(
+  std::ostream& out,
+  const std::vector<std::size_t>& waters_per_frame,
+  const std::unordered_map<std::int64_t, std::size_t>& water_presence_counts)
+{
+  if (waters_per_frame.empty()) {
+    out << "Trajectory water-pocket statistics: no frames were processed.\n";
+    return;
+  }
+
+  const auto frame_count = waters_per_frame.size();
+  const auto [min_it, max_it] = std::minmax_element(waters_per_frame.begin(), waters_per_frame.end());
+  const auto total_waters = std::accumulate(waters_per_frame.begin(), waters_per_frame.end(), 0.0);
+  const auto mean_waters = total_waters / static_cast<double>(frame_count);
+
+  auto sorted_counts = waters_per_frame;
+  std::sort(sorted_counts.begin(), sorted_counts.end());
+
+  double median_waters = 0.0;
+  if (frame_count % 2U == 1U) {
+    median_waters = static_cast<double>(sorted_counts[frame_count / 2U]);
+  } else {
+    const auto upper = frame_count / 2U;
+    const auto lower = upper - 1U;
+    median_waters = (static_cast<double>(sorted_counts[lower]) + static_cast<double>(sorted_counts[upper])) / 2.0;
+  }
+
+  std::vector<std::pair<std::int64_t, std::size_t>> ranked_presence(
+    water_presence_counts.begin(), water_presence_counts.end());
+  std::sort(
+    ranked_presence.begin(),
+    ranked_presence.end(),
+    [](const auto& lhs, const auto& rhs) {
+      if (lhs.second != rhs.second) {
+        return lhs.second > rhs.second;
+      }
+      return lhs.first < rhs.first;
+    });
+
+  if (ranked_presence.size() > 5U) {
+    ranked_presence.resize(5U);
+  }
+
+  out << "Trajectory water-pocket statistics:\n";
+  out << "  frames: " << frame_count << '\n';
+  out << "  waters/frame min: " << *min_it << '\n';
+  out << "  waters/frame max: " << *max_it << '\n';
+  out << std::fixed << std::setprecision(3);
+  out << "  waters/frame mean: " << mean_waters << '\n';
+  out << "  waters/frame median: " << median_waters << '\n';
+  out << "  top water resnums by frame presence:\n";
+  if (ranked_presence.empty()) {
+    out << "    (none)\n";
+    return;
+  }
+
+  out << std::setprecision(4);
+  for (std::size_t index = 0; index < ranked_presence.size(); ++index) {
+    const auto [resid, count] = ranked_presence[index];
+    const auto fraction = static_cast<double>(count) / static_cast<double>(frame_count);
+    out << "    " << (index + 1U) << ". " << resid << " -> " << fraction << '\n';
+  }
+}
+
+void write_hull_pdb_records(std::ostream& out,
+                            const HullData& hull_data,
+                            const std::vector<PdbAtomRecord>& water_atoms)
+{
+  const auto& vertices = hull_data.vertices;
+  for (std::size_t index = 0; index < vertices.size(); ++index) {
+    const auto& vertex = vertices[index];
+    write_pdb_atom_record(
+      out, index + 1U, PdbAtomRecord{ "C", "ANA", "A", 1, { vertex[0], vertex[1], vertex[2] }, "C" });
+  }
+
+  std::size_t next_serial = vertices.size() + 1U;
+  for (const auto& water_atom : water_atoms) {
+    write_pdb_atom_record(out, next_serial, water_atom);
+    ++next_serial;
+  }
+
+  std::vector<std::vector<std::size_t>> adjacency(vertices.size());
+  for (const auto& [first, second] : hull_data.bonds) {
+    if (first >= vertices.size() || second >= vertices.size()) {
+      throw std::runtime_error("invalid hull bond index while writing draw PDB output");
+    }
+    adjacency[first].push_back(second);
+    adjacency[second].push_back(first);
+  }
+
+  for (std::size_t atom_index = 0; atom_index < adjacency.size(); ++atom_index) {
+    auto& neighbors = adjacency[atom_index];
+    std::sort(neighbors.begin(), neighbors.end());
+    neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+
+    for (std::size_t offset = 0; offset < neighbors.size(); offset += 4U) {
+      out << "CONECT" << std::setw(5) << std::right << (atom_index + 1U);
+      const auto end = std::min(offset + 4U, neighbors.size());
+      for (std::size_t neighbor_index = offset; neighbor_index < end; ++neighbor_index) {
+        out << std::setw(5) << std::right << (neighbors[neighbor_index] + 1U);
+      }
+      out << '\n';
+    }
+  }
+}
+
+void write_hull_pdb_model(std::ostream& out,
+                          const HullData& hull_data,
+                          const std::size_t model_serial,
+                          const std::vector<PdbAtomRecord>& water_atoms)
+{
+  out << "MODEL" << std::setw(9) << std::right << model_serial << '\n';
+  write_hull_pdb_records(out, hull_data, water_atoms);
+  out << "ENDMDL\n";
+}
+
+void write_hull_pdb(const std::filesystem::path& output_path,
+                    const HullData& hull_data,
+                    const std::vector<PdbAtomRecord>& water_atoms)
+{
+  std::ofstream out(output_path);
+  if (!out) {
+    throw std::runtime_error("could not open draw output file '" + output_path.string() + "'");
+  }
+
+  out << "REMARK   Generated by watpocket --draw (.pdb output)\n";
+  write_hull_pdb_records(out, hull_data, water_atoms);
+
+  out << "END\n";
 }
 
 std::string python_quoted(const std::string& text)
@@ -574,6 +1393,7 @@ int main(int argc, char** argv)
   std::vector<std::string> inputs;
   std::string resnums;
   std::string draw_output;
+  std::string csv_output;
 
   app.set_version_flag("--version", std::string(myproject::cmake::project_version));
   app.add_option("inputs", inputs, "Input files: <structure> or <topology> <trajectory>")
@@ -581,7 +1401,15 @@ int main(int argc, char** argv)
     ->expected(1, 2);
   app.add_option("--resnums", resnums, "Comma-separated residue selectors, e.g. 12,15 or A:12,B:18")
     ->required();
-  app.add_option("-d,--draw", draw_output, "Write a PyMOL script that draws convex hull edges as CGO lines");
+  app.add_option(
+    "-d,--draw",
+    draw_output,
+    "Write draw output. Single-structure mode: .py (PyMOL script) or .pdb (hull PDB). "
+    "Trajectory mode: .pdb only (hull per frame using MODEL/ENDMDL).");
+  app.add_option(
+    "-o,--output",
+    csv_output,
+    "Write trajectory CSV output to this path (required in trajectory mode).");
 
   try {
     app.parse(argc, argv);
@@ -590,8 +1418,149 @@ int main(int argc, char** argv)
   }
 
   try {
+    const auto selectors = parse_residue_selectors(resnums);
+
     if (inputs.size() == 2U) {
-      throw std::runtime_error("trajectory mode (<topology> <trajectory>) is not implemented yet");
+      const std::filesystem::path topology_path = inputs[0];
+      const std::filesystem::path trajectory_path = inputs[1];
+
+      if (!std::filesystem::exists(topology_path)) {
+        throw std::runtime_error("topology file does not exist: '" + topology_path.string() + "'");
+      }
+
+      if (!std::filesystem::exists(trajectory_path)) {
+        throw std::runtime_error("trajectory file does not exist: '" + trajectory_path.string() + "'");
+      }
+
+      if (!is_netcdf_trajectory_path(trajectory_path)) {
+        throw std::runtime_error(
+          "trajectory mode currently supports NetCDF trajectories (.nc) only");
+      }
+
+      if (csv_output.empty()) {
+        throw std::runtime_error("-o/--output is required in trajectory mode (<topology> <trajectory>)");
+      }
+
+      const auto has_draw_output = !draw_output.empty();
+      const auto draw_path = std::filesystem::path(draw_output);
+      if (has_draw_output && !is_pdb_draw_output_path(draw_path)) {
+        throw std::runtime_error("trajectory mode --draw output path must end with .pdb");
+      }
+
+      const auto topology_is_parm7 = is_parm7_topology_path(topology_path);
+      std::optional<Parm7Topology> parm7_topology;
+      std::size_t topology_atom_count = 0;
+      std::vector<std::size_t> ca_atom_indices;
+      std::vector<WaterOxygenRef> water_refs;
+
+      if (topology_is_parm7) {
+        parm7_topology = parse_parm7_topology(topology_path);
+        topology_atom_count = parm7_topology->atom_names.size();
+        ca_atom_indices = resolve_ca_atom_indices(*parm7_topology, selectors);
+        water_refs = collect_water_oxygen_refs(*parm7_topology);
+      } else {
+        chemfiles::Trajectory topology_trajectory(topology_path.string(), 'r');
+        const auto topology_frame = topology_trajectory.read();
+        topology_atom_count = topology_frame.size();
+        ca_atom_indices = resolve_ca_atom_indices(topology_frame, selectors);
+        water_refs = collect_water_oxygen_refs(topology_frame);
+      }
+
+      chemfiles::Trajectory sanity_trajectory(trajectory_path.string(), 'r');
+      if (sanity_trajectory.size() == 0U) {
+        throw std::runtime_error("trajectory contains no frames: '" + trajectory_path.string() + "'");
+      }
+
+      const auto sanity_frame = sanity_trajectory.read();
+      if (sanity_frame.size() != topology_atom_count) {
+        throw std::runtime_error("atom-count mismatch between topology and trajectory: topology has "
+                                 + std::to_string(topology_atom_count) + " atoms, trajectory has "
+                                 + std::to_string(sanity_frame.size()) + " atoms");
+      }
+
+      chemfiles::Trajectory trajectory(trajectory_path.string(), 'r');
+      if (!topology_is_parm7) {
+        trajectory.set_topology(topology_path.string());
+      }
+
+      std::ofstream csv_file;
+      csv_file.open(csv_output);
+      if (!csv_file) {
+        throw std::runtime_error("could not open output file '" + csv_output + "'");
+      }
+
+      std::ofstream draw_file;
+      if (has_draw_output) {
+        draw_file.open(draw_path);
+        if (!draw_file) {
+          throw std::runtime_error("could not open draw output file '" + draw_path.string() + "'");
+        }
+        draw_file << "REMARK   Generated by watpocket --draw trajectory (.pdb MODEL output)\n";
+      }
+
+      std::vector<std::size_t> waters_per_frame;
+      std::unordered_map<std::int64_t, std::size_t> water_presence_counts;
+
+      write_csv_header(csv_file);
+
+      std::size_t frame_number = 0;
+      std::size_t successful_frames = 0;
+      std::size_t skipped_frames = 0;
+      while (!trajectory.done()) {
+        const auto current_frame_number = frame_number + 1U;
+        chemfiles::Frame frame;
+        try {
+          frame = trajectory.read();
+        } catch (const std::exception& e) {
+          throw std::runtime_error("frame " + std::to_string(current_frame_number) + ": " + e.what());
+        }
+
+        frame_number = current_frame_number;
+
+        try {
+          if (frame.size() != topology_atom_count) {
+            throw std::runtime_error("atom-count mismatch: expected "
+                                     + std::to_string(topology_atom_count)
+                                     + " atoms from topology but frame has "
+                                     + std::to_string(frame.size()));
+          }
+
+          const auto points = points_from_atom_indices(frame, ca_atom_indices, "selected C-alpha");
+          const auto hull_data = compute_hull_data(points);
+          const auto water_residue_ids = find_waters_inside_hull(frame, hull_data, water_refs);
+          write_csv_row(csv_file, current_frame_number, water_residue_ids);
+
+          if (has_draw_output) {
+            std::vector<PdbAtomRecord> water_atoms;
+            if (topology_is_parm7) {
+              water_atoms = collect_water_atoms_for_pdb(frame, *parm7_topology, water_residue_ids);
+            } else {
+              water_atoms = collect_water_atoms_for_pdb(frame, water_residue_ids);
+            }
+            write_hull_pdb_model(draw_file, hull_data, current_frame_number, water_atoms);
+          }
+
+          waters_per_frame.push_back(water_residue_ids.size());
+          for (const auto resid : water_residue_ids) {
+            ++water_presence_counts[resid];
+          }
+          ++successful_frames;
+        } catch (const std::exception& e) {
+          ++skipped_frames;
+          std::cerr << "Warning: skipping frame " << current_frame_number << ": " << e.what() << '\n';
+        }
+      }
+
+      if (has_draw_output) {
+        draw_file << "END\n";
+        std::cout << "Wrote trajectory hull PDB: " << draw_output << '\n';
+      }
+
+      std::cout << "Wrote trajectory CSV: " << csv_output << '\n';
+      write_trajectory_statistics(std::cout, waters_per_frame, water_presence_counts);
+      std::cout << "Processed " << frame_number << " trajectory frames (" << successful_frames
+                << " successful, " << skipped_frames << " skipped).\n";
+      return 0;
     }
 
     const std::filesystem::path input_path = inputs.front();
@@ -599,10 +1568,28 @@ int main(int argc, char** argv)
       throw std::runtime_error("input file does not exist: '" + input_path.string() + "'");
     }
 
-    const auto selectors = parse_residue_selectors(resnums);
+    if (is_parm7_topology_path(input_path)) {
+      throw std::runtime_error(
+        "parm7/prmtop topology files are only supported in trajectory mode: "
+        "watpocket <topology.parm7> <trajectory.nc> --resnums ...");
+    }
 
-    if (!draw_output.empty() && !is_drawable_structure_path(input_path)) {
-      throw std::runtime_error("--draw requires a single PDB/CIF input (.pdb, .cif, .mmcif)");
+    if (!draw_output.empty()) {
+      const auto draw_path = std::filesystem::path(draw_output);
+      const auto draw_is_py = is_pymol_draw_output_path(draw_path);
+      const auto draw_is_pdb = is_pdb_draw_output_path(draw_path);
+      if (!draw_is_py && !draw_is_pdb) {
+        throw std::runtime_error("--draw output path must end with .py or .pdb");
+      }
+
+      if (draw_is_py && !is_drawable_structure_path(input_path)) {
+        throw std::runtime_error("--draw .py output requires a single PDB/CIF input (.pdb, .cif, .mmcif)");
+      }
+    }
+
+    if (!csv_output.empty()) {
+      throw std::runtime_error(
+        "-o/--output is only supported in trajectory mode (<topology> <trajectory>)");
     }
 
     chemfiles::Trajectory trajectory(input_path.string(), 'r');
@@ -620,9 +1607,15 @@ int main(int argc, char** argv)
     }
 
     if (!draw_output.empty()) {
-      write_pymol_script(
-        input_path, std::filesystem::path(draw_output), hull_data.edges, water_residue_ids);
-      std::cout << "Wrote PyMOL draw script: " << draw_output << '\n';
+      const auto draw_path = std::filesystem::path(draw_output);
+      if (is_pymol_draw_output_path(draw_path)) {
+        write_pymol_script(input_path, draw_path, hull_data.edges, water_residue_ids);
+        std::cout << "Wrote PyMOL draw script: " << draw_output << '\n';
+      } else if (is_pdb_draw_output_path(draw_path)) {
+        const auto water_atoms = collect_water_atoms_for_pdb(frame, water_residue_ids);
+        write_hull_pdb(draw_path, hull_data, water_atoms);
+        std::cout << "Wrote hull PDB: " << draw_output << '\n';
+      }
     }
 
     std::cout << "Convex hull built from " << points.size() << " residues with " << hull_data.edges.size()

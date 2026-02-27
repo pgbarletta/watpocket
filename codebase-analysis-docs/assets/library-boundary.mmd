@@ -7,11 +7,20 @@ flowchart LR
     Prop[Residue properties\n`chainid`/`chainname`]
   end
 
+  subgraph PARM7[parm7 text parser]
+    PFile[parm7 file]
+    PSec[%FLAG/%FORMAT sections]
+    PTopo[Minimal topology:\natom names, residue labels,\nresidue pointers, chain ids]
+  end
+
   subgraph APP[watpocket adapters (`src/watpocket/main.cpp`)]
     Parse[Selector parsing\n`parse_residue_selectors()`]
     Lookup[Residue maps\n`build_residue_lookup()`]
-    CA[CA extraction\n`find_ca_atom_index()`]
-    Water[Water oxygen extraction\n`collect_water_oxygens()`]
+    CA[CA extraction\n`resolve_ca_atom_indices()`]
+    Water[Water refs/materialization\n`collect_water_oxygen_refs()`]
+    CSV[CSV serializer\n`write_csv_row()`]
+    Stats[Trajectory statistics\n`write_trajectory_statistics()`]
+    HullPDB[PDB hull serializer\n`write_hull_pdb()` / `write_hull_pdb_model()`]
     Classify[Hull membership\n`point_inside_or_on_hull()`]
   end
 
@@ -25,12 +34,17 @@ flowchart LR
   T --> F --> Top
   F --> Pos
   Top --> Prop
+  PFile --> PSec --> PTopo
 
   Top --> Lookup
+  PTopo --> Lookup
   Pos --> CA
   Parse --> CA
   Pos --> Water
   Water --> Classify
+  Classify --> CSV
+  Classify --> Stats
+  Classify --> HullPDB
 
   CA --> Ker
   Ker --> CH --> Mesh --> Plane --> Classify

@@ -15,6 +15,10 @@ This repository contains `watpocket`, a C++ project that integrates:
    - `codebase-analysis-docs/assets/*.mmd` when architecture/data flow/boundaries change
 5. Keep documentation updates in the same change set as the code change.
 
+## Planning Requests
+- If the user asks to create a plan (or to plan implementation work), you must use the planner agent instructions in:
+  - `.codex/agents/planner.md`
+
 ## Skill Usage Requirements
 For all tasks in this repository, use these skills proactively:
 - `cgal` skill: for convex hull logic, geometric kernels, robustness, and CGAL API usage

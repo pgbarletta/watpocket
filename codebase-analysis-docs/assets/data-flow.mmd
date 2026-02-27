@@ -1,7 +1,7 @@
 flowchart TD
   A[Input path(s)] --> B{1 or 2 positional args?}
   B -->|1| C[Open structure via Chemfiles\n`Trajectory(path,'r')`]
-  B -->|2| X[Trajectory mode branch\nthrows "not implemented yet"]
+  B -->|2| T0[Open topology + NetCDF trajectory]
   C --> D[Read first frame\n`trajectory.read()`]
   D --> E[Build residue lookup\nby chain/id and id]
   E --> F[Resolve CA coordinates\nselected residues]
@@ -14,4 +14,33 @@ flowchart TD
   K --> L[Sorted unique water residue ids]
   L --> M[Print residues + `select watpocket, resi ...`]
   L --> N{`-d/--draw` set?}
-  N -->|yes| O[Write PyMOL script\nload input, hull lines, watpocket spheres]
+  N -->|yes| O{draw output extension}
+  O -->|.py| O1[Write PyMOL script\nload input, hull lines, watpocket spheres]
+  O -->|.pdb| O2[Write hull PDB\nATOM(ANA) + CONECT edges]
+  O -->|other| O3[Error: draw output must end with .py or .pdb]
+  T0 --> T1{topology extension}
+  T1 -->|.parm7/.prmtop| T2a[Parse parm7 sections:\nPOINTERS/ATOM_NAME/RESIDUE_LABEL/RESIDUE_POINTER]
+  T1 -->|other| T2b[Read topology frame via Chemfiles]
+  T2a --> T2[Cache CA indices + water oxygen refs]
+  T2b --> T2
+  T0 --> T3[Sanity check atom count\n(topology vs first trajectory frame)]
+  T3 --> T4{parm7 topology?}
+  T4 -->|no| T4a[Attach topology with `set_topology`]
+  T4 -->|yes| T4b[Skip Chemfiles topology attach]
+  T4a --> T5
+  T4b --> T5
+  T2 --> T5
+  T5 --> T5o{`-o/--output` provided?}
+  T5o -->|no| T5e[Error: output file is required]
+  T5o -->|yes| T5d{`--draw` provided?}
+  T5d -->|yes| T5dp{must be `.pdb`\nopen trajectory draw file}
+  T5d -->|no| T6
+  T5dp --> T6[Per-frame: CA points -> hull -> water classification]
+  T6 --> T6a{frame compute ok?}
+  T6a -->|yes| T7[CSV row: frame,resnums,total_count]
+  T7 --> T9[Write CSV file]
+  T6a -->|yes + draw| T8[Append MODEL block to draw PDB]
+  T6a -->|no| T6w[warn to stderr and skip frame]
+  T6a -->|yes| T10[Accumulate stats:\nwaters/frame + water presence counts]
+  T10 --> T11[Print summary stats to stdout]
+  T8 --> T12[Finalize draw file with END]

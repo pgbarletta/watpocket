@@ -7,19 +7,27 @@
 - Single-frame structure input via Chemfiles (`.pdb`, `.cif`, `.mmcif` tested path)
 - Required residue selection with `--resnums`
 - Convex hull generation via CGAL `convex_hull_3`
-- Optional PyMOL script output with `-d/--draw` to render hull edges as CGO lines
+- Optional draw output with `-d/--draw`:
+  - `.py`: PyMOL script with hull edges as CGO lines
+  - `.pdb`: hull-only PDB (`ANA` atoms + `CONECT` edges)
+- Trajectory mode (`<topology> <trajectory.nc>`) with per-frame water-pocket analysis and CSV output
 
 ## CLI
 
 ```bash
-watpocket <structure> --resnums <selectors> [-d output.py]
-watpocket <topology> <trajectory> --resnums <selectors>
+watpocket <structure> --resnums <selectors> [-d output.py|output.pdb]
+watpocket <topology> <trajectory.nc> --resnums <selectors> -o output.csv [-d hull_models.pdb]
 ```
 
 ### Input Rules
 
 - With one positional input, it is treated as a structure file.
-- With two positional inputs, they are interpreted as `<topology> <trajectory>`, but this mode is not implemented yet in v1.
+  - `parm7/.prmtop` is not supported in single-input mode (no coordinates); use trajectory mode instead.
+- With two positional inputs, they are interpreted as `<topology> <trajectory>`.
+  - `<trajectory>` currently supports NetCDF only (`.nc`).
+  - `<topology>` can be structure (`.pdb/.cif/.mmcif`) or Amber topology (`.parm7/.prmtop`).
+  - In trajectory mode, topology is used to define atom/residue identity and must be atom-count compatible with the trajectory.
+  - If atom counts differ, `watpocket` exits with an error.
 
 ### Residue Selector Rules
 
@@ -29,6 +37,10 @@ watpocket <topology> <trajectory> --resnums <selectors>
   - `A:12,A:15,B:18`
 - If the input structure contains more than one chain, selectors must be chain-qualified (for example `A:12`).
 - Every selected residue must contain exactly one atom named `CA`.
+- For `parm7` topologies:
+  - residue IDs are 1-based residue order (`1..NRES`);
+  - chain-qualified selectors require `RESIDUE_CHAINID` in the topology;
+  - if `RESIDUE_CHAINID` is missing, using `A:12`-style selectors is an error.
 
 ### Geometry Rules
 
@@ -38,15 +50,55 @@ The program raises an error if selected C-alpha points are:
 - collinear,
 - coplanar.
 
-## `--draw` PyMOL Script Output
+## `--draw` Output
 
-When `-d/--draw` is provided, `watpocket` writes a Python script for PyMOL that:
+When `-d/--draw` is provided, output format is chosen by mode and filename extension:
 
-- loads the input structure,
-- creates a CGO object with hull edges (`LINES` only),
-- applies default styling for readability.
+- `.py`: writes a Python script for PyMOL that:
+  - loads the input structure,
+  - creates a CGO object with hull edges (`LINES` only),
+  - applies default styling for readability.
+  - requires input structure extension `.pdb`, `.cif`, or `.mmcif`.
+  - single-structure mode only.
 
-In draw mode, the input must be `.pdb`, `.cif`, or `.mmcif`.
+- `.pdb`: writes a hull-only PDB where:
+  - each convex-hull vertex is an `ATOM` record,
+  - atom element is `C`
+  - residue name is `ANA`,
+  - convex-hull edges are encoded with `CONECT` records,
+  - if waters are found inside the hull, full water residues (all atoms) are appended as `ATOM` records
+  - single-structure mode: one hull in one PDB file
+  - trajectory mode: one hull per successful frame using `MODEL ... ENDMDL`, with inside-hull waters included per model
+
+Trajectory mode accepts `--draw` only for `.pdb` paths. `.py` is rejected.
+
+## Trajectory CSV Output
+
+When running in trajectory mode (`<topology> <trajectory.nc>`), `watpocket` computes results independently for each frame and writes CSV:
+
+- Header: `frame,resnums,total_count`
+- `frame`: 1-based frame index
+- `resnums`: water residue numbers separated by one space (quoted CSV field, empty as `""`)
+- `total_count`: number of water residues inside the hull for that frame
+
+Output destination:
+
+- `-o/--output <path>`: required in trajectory mode; CSV is always written to this file
+
+Optional trajectory draw output:
+
+- `-d/--draw <path>.pdb`: writes trajectory hulls as multi-model PDB (`MODEL` records)
+
+Frame handling:
+
+- if one frame fails hull/water computation, that frame is skipped
+- a warning is written to `stderr`
+- remaining frames continue processing
+
+After trajectory processing, `watpocket` prints summary statistics to stdout:
+
+- min/max/mean/median waters per frame
+- top 5 water `resnums` by presence in pocket, with fraction of frames present
 
 ## Dependencies
 
@@ -74,4 +126,22 @@ Then in PyMOL:
 
 ```python
 run hull.py
+```
+
+Trajectory mode example:
+
+```bash
+watpocket topology.pdb traj.nc --resnums 164,128,160,55,167,61,42,65,66 -o pocket_waters.csv
+```
+
+Trajectory mode with draw PDB example:
+
+```bash
+watpocket topology.parm7 traj.nc --resnums 164,128,160,55,167,61,42,65,66 -o pocket_waters.csv -d hull_models.pdb
+```
+
+`parm7` topology example:
+
+```bash
+watpocket topology.parm7 traj.nc --resnums 164,128,160,55,167,61,42,65,66 -o pocket_waters.csv
 ```
