@@ -18,6 +18,7 @@ flowchart LR
     Lookup[Residue maps\n`build_residue_lookup()`]
     CA[CA extraction\n`resolve_ca_atom_indices()`]
     Water[Water refs/materialization\n`collect_water_oxygen_refs()`]
+    WaterPDB[Water atom extraction for PDB\n`collect_water_atoms_for_pdb()`]
     CSV[CSV serializer\n`write_csv_row()`]
     Stats[Trajectory statistics\n`write_trajectory_statistics()`]
     HullPDB[PDB hull serializer\n`write_hull_pdb()` / `write_hull_pdb_model()`]
@@ -41,7 +42,9 @@ flowchart LR
   Pos --> CA
   Parse --> CA
   Pos --> Water
+  Pos --> WaterPDB
   Water --> Classify
+  WaterPDB --> HullPDB
   Classify --> CSV
   Classify --> Stats
   Classify --> HullPDB

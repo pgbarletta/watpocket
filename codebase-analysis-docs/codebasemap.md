@@ -435,9 +435,9 @@ flowchart LR
   - `watpocket --version` regex check
   - single-structure draw artifacts:
     - `--draw` rejects unknown output extension
-    - `--draw` with `.pdb` writes hull PDB output
+    - `--draw` with `.pdb` writes hull PDB output containing inside-hull waters when present
   - trajectory draw artifacts:
-    - trajectory `--draw .pdb` writes model PDB output
+    - trajectory `--draw .pdb` writes model PDB output containing inside-hull waters when present
     - trajectory `--draw .py` is rejected
   - trajectory-mode contract:
     - missing `-o` in trajectory mode should fail
@@ -445,7 +445,7 @@ flowchart LR
     - single-input `parm7` should fail with trajectory-mode guidance
     - chain-qualified selectors on `parm7` without `RESIDUE_CHAINID` should fail (source: `test/CMakeLists.txt`).
 - Unit tests currently target template `sample_library` factorial logic only (source: `test/tests.cpp`, `test/constexpr_tests.cpp`).
-- No repository-native automated test currently validates hull/water logic on `tests/data/wcn` sample input; those are manual workflow artifacts (`run.sh`, `sal.py`).
+- Draw output tests include content validation through `test/verify_draw_pdb_contains_waters.cmake`, asserting that generated draw PDBs contain water atoms for the WCN sample configuration.
 
 ### CI notes and platform caveats
 - GitHub Actions matrix includes Linux/macOS/Windows with clang/gcc/msvc and Debug/Release variants (source: `.github/workflows/ci.yml`).

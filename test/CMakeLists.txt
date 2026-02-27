@@ -50,33 +50,29 @@ if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb")
   add_test(
     NAME cli.draw_writes_hull_pdb
     COMMAND
-      watpocket
-      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb"
-      --resnums
-      164,128,160,55
-      --draw
-      "${CMAKE_CURRENT_BINARY_DIR}/draw_mode.pdb")
-  set_tests_properties(
-    cli.draw_writes_hull_pdb
-    PROPERTIES PASS_REGULAR_EXPRESSION "Wrote hull PDB")
+      ${CMAKE_COMMAND}
+      -DWATPOCKET_BIN=$<TARGET_FILE:watpocket>
+      -DINPUT1=${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb
+      -DRESNUMS=164,128,160,55,167,61,42,65,66
+      -DDRAW_OUT=${CMAKE_CURRENT_BINARY_DIR}/draw_mode.pdb
+      -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/verify_draw_pdb_contains_waters.cmake)
 endif()
 
 if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc")
   add_test(
     NAME cli.trajectory_draw_writes_model_pdb
     COMMAND
-      watpocket
-      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
-      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc"
-      --resnums
-      164,128,160,55
-      -o
-      "${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.csv"
-      --draw
-      "${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.pdb")
-  set_tests_properties(
-    cli.trajectory_draw_writes_model_pdb
-    PROPERTIES PASS_REGULAR_EXPRESSION "Wrote trajectory hull PDB")
+      ${CMAKE_COMMAND}
+      -DWATPOCKET_BIN=$<TARGET_FILE:watpocket>
+      -DINPUT1=${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7
+      -DINPUT2=${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc
+      -DRESNUMS=164,128,160,55,167,61,42,65,66
+      -DCSV_OUT=${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.csv
+      -DDRAW_OUT=${CMAKE_CURRENT_BINARY_DIR}/trajectory_mode_draw.pdb
+      -DREQUIRE_MODEL=ON
+      -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/verify_draw_pdb_contains_waters.cmake)
 
   add_test(
     NAME cli.trajectory_draw_rejects_py

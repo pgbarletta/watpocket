@@ -16,7 +16,7 @@ flowchart TD
   L --> N{`-d/--draw` set?}
   N -->|yes| O{draw output extension}
   O -->|.py| O1[Write PyMOL script\nload input, hull lines, watpocket spheres]
-  O -->|.pdb| O2[Write hull PDB\nATOM(ANA) + CONECT edges]
+  O -->|.pdb| O2[Write hull PDB\nATOM(ANA)+CONECT + inside-hull waters]
   O -->|other| O3[Error: draw output must end with .py or .pdb]
   T0 --> T1{topology extension}
   T1 -->|.parm7/.prmtop| T2a[Parse parm7 sections:\nPOINTERS/ATOM_NAME/RESIDUE_LABEL/RESIDUE_POINTER]
@@ -39,7 +39,7 @@ flowchart TD
   T6 --> T6a{frame compute ok?}
   T6a -->|yes| T7[CSV row: frame,resnums,total_count]
   T7 --> T9[Write CSV file]
-  T6a -->|yes + draw| T8[Append MODEL block to draw PDB]
+  T6a -->|yes + draw| T8[Append MODEL block to draw PDB\n(hull + inside-hull waters)]
   T6a -->|no| T6w[warn to stderr and skip frame]
   T6a -->|yes| T10[Accumulate stats:\nwaters/frame + water presence counts]
   T10 --> T11[Print summary stats to stdout]
