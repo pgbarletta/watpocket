@@ -1,5 +1,6 @@
 flowchart LR
-  CLI[CLI / Argument Parsing\n`main()` + CLI11] --> MODE{1 or 2 inputs}
+  CLI[CLI wrapper\n`src/watpocket/main.cpp` + CLI11] --> API[Library API\n`watpocket::analyze_*`]
+  API --> MODE{1 or 2 inputs}
   MODE -->|1 input| IO1[Read structure frame]
   IO1 --> SEL1[Resolve CA points]
   SEL1 --> GEO1[Convex hull]

@@ -1,46 +1,31 @@
 flowchart TD
-  A[Input path(s)] --> B{1 or 2 positional args?}
-  B -->|1| C[Open structure via Chemfiles\n`Trajectory(path,'r')`]
-  B -->|2| T0[Open topology + NetCDF trajectory]
-  C --> D[Read first frame\n`trajectory.read()`]
-  D --> E[Build residue lookup\nby chain/id and id]
-  E --> F[Resolve CA coordinates\nselected residues]
-  F --> G[Degeneracy checks\n<4 / collinear / coplanar]
-  G --> H[CGAL convex hull\n`convex_hull_3` -> `Surface_mesh`]
-  H --> I[Derive hull edges + inward halfspaces]
-  D --> J[Collect water oxygen atoms\nresname+atom filters]
-  I --> K[Point-in-hull tests\n`Plane_3::oriented_side`]
-  J --> K
-  K --> L[Sorted unique water residue ids]
-  L --> M[Print residues + `select watpocket, resi ...`]
-  L --> N{`-d/--draw` set?}
-  N -->|yes| O{draw output extension}
-  O -->|.py| O1[Write PyMOL script\nload input, hull lines, watpocket spheres]
-  O -->|.pdb| O2[Write hull PDB\nATOM(ANA)+CONECT + inside-hull waters]
-  O -->|other| O3[Error: draw output must end with .py or .pdb]
-  T0 --> T1{topology extension}
-  T1 -->|.parm7/.prmtop| T2a[Parse parm7 sections:\nPOINTERS/ATOM_NAME/RESIDUE_LABEL/RESIDUE_POINTER]
-  T1 -->|other| T2b[Read topology frame via Chemfiles]
-  T2a --> T2[Cache CA indices + water oxygen refs]
-  T2b --> T2
-  T0 --> T3[Sanity check atom count\n(topology vs first trajectory frame)]
-  T3 --> T4{parm7 topology?}
-  T4 -->|no| T4a[Attach topology with `set_topology`]
-  T4 -->|yes| T4b[Skip Chemfiles topology attach]
-  T4a --> T5
-  T4b --> T5
-  T2 --> T5
-  T5 --> T5o{`-o/--output` provided?}
-  T5o -->|no| T5e[Error: output file is required]
-  T5o -->|yes| T5d{`--draw` provided?}
-  T5d -->|yes| T5dp{must be `.pdb`\nopen trajectory draw file}
-  T5d -->|no| T6
-  T5dp --> T6[Per-frame: CA points -> hull -> water classification]
-  T6 --> T6a{frame compute ok?}
-  T6a -->|yes| T7[CSV row: frame,resnums,total_count]
-  T7 --> T9[Write CSV file]
-  T6a -->|yes + draw| T8[Append MODEL block to draw PDB\n(hull + inside-hull waters)]
-  T6a -->|no| T6w[warn to stderr and skip frame]
-  T6a -->|yes| T10[Accumulate stats:\nwaters/frame + water presence counts]
-  T10 --> T11[Print summary stats to stdout]
-  T8 --> T12[Finalize draw file with END]
+  CLI[watpocket CLI\n`src/watpocket/main.cpp`] --> MODE{1 or 2 positional args?}
+
+  MODE -->|1| API1[Library: `watpocket::analyze_structure_file(path, selectors)`]
+  API1 --> IO1[Chemfiles: open + read first frame]
+  IO1 --> SEL1[Resolve CA points]
+  SEL1 --> GEO1[CGAL: convex hull + halfspaces]
+  GEO1 --> ANA1[Collect + classify waters inside hull]
+  ANA1 --> RES1[`StructureAnalysisResult`\n(hull + water ids + PDB water atoms)]
+  RES1 --> OUT1[CLI prints stdout summary]
+  RES1 --> DRAW1{`-d/--draw` set?}
+  DRAW1 -->|.py| PY[Library: `write_pymol_draw_script(...)`]
+  DRAW1 -->|.pdb| PDB[Library: `write_hull_pdb(...)`]
+
+  MODE -->|2| API2[Library: `watpocket::analyze_trajectory_files(topology, trajectory, ...)`]
+  API2 --> TOP{Topology backend}
+  TOP -->|parm7/prmtop| P7[Parse parm7 topology]
+  TOP -->|structure file| CF[Chemfiles: read topology frame]
+  P7 --> CACHE[Cache CA indices + water refs]
+  CF --> CACHE
+  API2 --> SAN[Sanity check: traj has frames + atom-count matches]
+  SAN --> LOOP[Per-frame loop: read frame]
+  CACHE --> LOOP
+  LOOP --> FRAME[CA points -> hull -> water classification]
+  FRAME -->|ok| CSV[Write CSV row (if enabled)]
+  FRAME -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
+  FRAME -->|ok| CB[Callback: `on_frame` (if provided)]
+  FRAME -->|error| WARN[Callback: `on_warning`; skip frame]
+  LOOP --> STATS[Accumulate stats]
+  STATS --> RES2[`TrajectorySummary`]
+  RES2 --> OUT2[CLI prints stats + processed counts]

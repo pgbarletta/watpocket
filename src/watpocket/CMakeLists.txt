@@ -4,8 +4,7 @@ target_link_libraries(
   watpocket
   PRIVATE myproject::myproject_options
           myproject::myproject_warnings
-          chemfiles
-          CGAL::CGAL)
+          watpocket_lib)
 
 target_link_system_libraries(
   watpocket

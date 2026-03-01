@@ -78,7 +78,7 @@ endif()
 include(CTest)
 
 if(BUILD_TESTING)
-  message(AUTHOR_WARNING "Building Tests. Be sure to check out test/constexpr_tests.cpp for constexpr testing")
+  message(AUTHOR_WARNING "Building tests (see test/ for CLI smoke tests and API sanity checks)")
   add_subdirectory(test)
 endif()
 
@@ -112,13 +112,18 @@ include(cmake/PackageProject.cmake)
 # Add other targets that you want installed here, by default we just package the one executable
 # we know we want to ship
 myproject_package_project(
-  TARGETS
+  NAME
   watpocket
-  myproject_options
-  myproject_warnings
+  TARGETS
+  watpocket_lib
   # FIXME: this does not work! CK
   # PRIVATE_DEPENDENCIES_CONFIGURED project_options project_warnings
 )
+
+# Install the CLI binary as a runtime artifact, but do not export it as part of
+# the CMake package to avoid name conflicts with the `watpocket` library target.
+include(GNUInstallDirs)
+install(TARGETS watpocket RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT bin)
 
 # Experience shows that explicit package naming can help make it easier to sort
 # out potential ABI related issues before they start, while helping you

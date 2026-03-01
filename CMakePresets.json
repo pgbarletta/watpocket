@@ -179,6 +179,76 @@
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
+        },
+        {
+            "name": "release",
+            "displayName": "release",
+            "description": "release watpocket",
+            "condition": {
+                "type": "inList",
+                "string": "${hostSystemName}",
+                "list": [
+                    "Linux",
+                    "Darwin"
+                ]
+            },
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "myproject_ENABLE_SANITIZER_ADDRESS": "OFF",
+                "myproject_ENABLE_SANITIZER_UNDEFINED": "OFF",
+                "myproject_ENABLE_CLANG_TIDY": "OFF",
+                "myproject_ENABLE_CPPCHECK": "OFF",
+                "CMAKE_C_COMPILER_LAUNCHER": "",
+                "CMAKE_CXX_COMPILER_LAUNCHER": ""
+            }
+        },
+        {
+            "name": "debug",
+            "displayName": "debug",
+            "description": "debug watpocket",
+            "condition": {
+                "type": "inList",
+                "string": "${hostSystemName}",
+                "list": [
+                    "Linux",
+                    "Darwin"
+                ]
+            },
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "myproject_ENABLE_SANITIZER_ADDRESS": "OFF",
+                "myproject_ENABLE_SANITIZER_UNDEFINED": "OFF",
+                "myproject_ENABLE_CLANG_TIDY": "OFF",
+                "myproject_ENABLE_CPPCHECK": "OFF",
+                "CMAKE_C_COMPILER_LAUNCHER": "",
+                "CMAKE_CXX_COMPILER_LAUNCHER": ""
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "release",
+            "displayName": "release",
+            "description": "Build only the watpocket CLI target from the release configure preset",
+            "configurePreset": "release",
+            "targets": [
+                "watpocket"
+            ],
+            "jobs": 12
+        },
+        {
+            "name": "debug",
+            "displayName": "debug",
+            "description": "Build only the watpocket CLI target from the release configure preset",
+            "configurePreset": "debug",
+            "targets": [
+                "watpocket"
+            ],
+            "jobs": 12
         }
     ],
     "testPresets": [

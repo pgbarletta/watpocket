@@ -9,9 +9,9 @@ project(CmakeConfigPackageTests
 if(PROJECT_IS_TOP_LEVEL OR TEST_INSTALLED_VERSION)
   enable_testing()
 
-  find_package(myproject CONFIG REQUIRED) # for watpocket, project_options, ...
+  find_package(watpocket CONFIG REQUIRED) # for watpocket library + CLI
 
-  if(NOT TARGET myproject_options)
+  if(NOT TARGET watpocket::watpocket)
     message(FATAL_ERROR "Required config package not found!")
     return() # be strictly paranoid for Template Janitor github action! CK
   endif()
@@ -125,30 +125,20 @@ if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_
     PROPERTIES PASS_REGULAR_EXPRESSION "has no RESIDUE_CHAINID section")
 endif()
 
-add_executable(tests tests.cpp)
+add_executable(watpocket_api_tests watpocket_api_tests.cpp)
 target_link_libraries(
-  tests
+  watpocket_api_tests
   PRIVATE myproject::myproject_warnings
           myproject::myproject_options
-          myproject::sample_library
+          watpocket_lib
           Catch2::Catch2WithMain)
 
-myproject_configure_linker(tests)
+myproject_configure_linker(watpocket_api_tests)
 
-if(WIN32 AND BUILD_SHARED_LIBS)
-  add_custom_command(
-    TARGET tests
-    PRE_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:tests> $<TARGET_FILE_DIR:tests>
-    COMMAND_EXPAND_LISTS)
-endif()
-
-# automatically discover tests that are defined in catch based test files you can modify the unittests. Set TEST_PREFIX
-# to whatever you want, or use different for different binaries
 catch_discover_tests(
-  tests
+  watpocket_api_tests
   TEST_PREFIX
-  "unittests."
+  "api."
   DISCOVERY_MODE
   PRE_TEST
   REPORTER
@@ -156,61 +146,14 @@ catch_discover_tests(
   OUTPUT_DIR
   .
   OUTPUT_PREFIX
-  "unittests."
+  "api."
   OUTPUT_SUFFIX
   .xml)
 
-# Add a file containing a set of constexpr tests
-add_executable(constexpr_tests constexpr_tests.cpp)
+# Ensure the exported CMake package target can be used by a "consumer" translation unit
+# that only includes watpocket headers (no Chemfiles/CGAL headers).
+add_executable(watpocket_package_consumer package_consumer.cpp)
 target_link_libraries(
-  constexpr_tests
-  PRIVATE myproject::myproject_warnings
-          myproject::myproject_options
-          myproject::sample_library
-          Catch2::Catch2WithMain)
-
-myproject_configure_linker(constexpr_tests)
-
-catch_discover_tests(
-  constexpr_tests
-  TEST_PREFIX
-  "constexpr."
-  DISCOVERY_MODE
-  PRE_TEST
-  REPORTER
-  XML
-  OUTPUT_DIR
-  .
-  OUTPUT_PREFIX
-  "constexpr."
-  OUTPUT_SUFFIX
-  .xml)
-
-# Disable the constexpr portion of the test, and build again this allows us to have an executable that we can debug when
-# things go wrong with the constexpr testing
-add_executable(relaxed_constexpr_tests constexpr_tests.cpp)
-target_link_libraries(
-  relaxed_constexpr_tests
-  PRIVATE myproject::myproject_warnings
-          myproject::myproject_options
-          myproject::sample_library
-          Catch2::Catch2WithMain)
-target_compile_definitions(relaxed_constexpr_tests PRIVATE -DCATCH_CONFIG_RUNTIME_STATIC_REQUIRE)
-
-myproject_configure_linker(relaxed_constexpr_tests)
-
-
-catch_discover_tests(
-  relaxed_constexpr_tests
-  TEST_PREFIX
-  "relaxed_constexpr."
-  DISCOVERY_MODE
-  PRE_TEST
-  REPORTER
-  XML
-  OUTPUT_DIR
-  .
-  OUTPUT_PREFIX
-  "relaxed_constexpr."
-  OUTPUT_SUFFIX
-  .xml)
+  watpocket_package_consumer
+  PRIVATE watpocket::watpocket)
+add_test(NAME package.consumer_runs COMMAND watpocket_package_consumer)

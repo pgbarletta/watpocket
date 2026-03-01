@@ -13,14 +13,19 @@ flowchart LR
     PTopo[Minimal topology:\natom names, residue labels,\nresidue pointers, chain ids]
   end
 
-  subgraph APP[watpocket adapters (`src/watpocket/main.cpp`)]
+  subgraph CLI[watpocket CLI wrapper (`src/watpocket/main.cpp`)]
+    Args[CLI11 parsing + mode gating]
+  end
+
+  subgraph LIB[watpocket library (`src/watpocket_lib/watpocket.cpp`)]
+    API[Public API\n`include/watpocket/watpocket.hpp`]
     Parse[Selector parsing\n`parse_residue_selectors()`]
     Lookup[Residue maps\n`build_residue_lookup()`]
     CA[CA extraction\n`resolve_ca_atom_indices()`]
     Water[Water refs/materialization\n`collect_water_oxygen_refs()`]
     WaterPDB[Water atom extraction for PDB\n`collect_water_atoms_for_pdb()`]
     CSV[CSV serializer\n`write_csv_row()`]
-    Stats[Trajectory statistics\n`write_trajectory_statistics()`]
+    Stats[Trajectory statistics\n(summary computed in library;\nCLI prints formatting)]
     HullPDB[PDB hull serializer\n`write_hull_pdb()` / `write_hull_pdb_model()`]
     Classify[Hull membership\n`point_inside_or_on_hull()`]
   end
@@ -36,6 +41,8 @@ flowchart LR
   F --> Pos
   Top --> Prop
   PFile --> PSec --> PTopo
+
+  Args --> API
 
   Top --> Lookup
   PTopo --> Lookup
