@@ -1,12 +1,9 @@
-#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
-#include <CGAL/Kernel/global_functions_3.h>
-#include <CGAL/Surface_mesh.h>
-#include <CGAL/convex_hull_3.h>
-
 #include <chemfiles.hpp>
 
 #include <internal_use_only/config.hpp>
 #include <watpocket/watpocket.hpp>
+
+#include "point_soa_cgal_adapter.hpp"
 
 #include <algorithm>
 #include <array>
@@ -32,11 +29,6 @@ namespace watpocket {
 
 namespace {
 
-using Kernel = CGAL::Exact_predicates_inexact_constructions_kernel;
-using Point3 = Kernel::Point_3;
-using Plane3 = Kernel::Plane_3;
-using Mesh = CGAL::Surface_mesh<Point3>;
-
 struct ChainResidKey {
   std::string chain;
   std::int64_t resid = 0;
@@ -60,11 +52,6 @@ struct ResidueLookup {
   std::unordered_map<ChainResidKey, std::vector<std::size_t>, ChainResidKeyHash> by_chain_and_id;
   std::unordered_map<std::int64_t, std::vector<std::size_t>> by_id;
   std::set<std::string> chains;
-};
-
-struct HullData {
-  HullGeometry geometry;
-  std::vector<Plane3> halfspaces;
 };
 
 struct WaterOxygenRef {
@@ -553,15 +540,17 @@ std::vector<std::size_t> resolve_ca_atom_indices(const Parm7Topology& topology,
   return atom_indices;
 }
 
-std::vector<Point3> points_from_atom_indices(const chemfiles::Frame& frame,
-                                             const std::vector<std::size_t>& atom_indices,
-                                             const std::string& label)
+void fill_points_from_atom_indices(const chemfiles::Frame& frame,
+                                   const std::vector<std::size_t>& atom_indices,
+                                   const std::string& label,
+                                   PointSoA& points)
 {
-  std::vector<Point3> points;
-  points.reserve(atom_indices.size());
+  points.resize(atom_indices.size());
 
   const auto& positions = frame.positions();
-  for (const auto atom_index : atom_indices) {
+  auto point_view = points.mutable_view();
+  for (std::size_t i = 0; i < atom_indices.size(); ++i) {
+    const auto atom_index = atom_indices[i];
     if (atom_index >= positions.size()) {
       throw std::runtime_error(label + " atom index " + std::to_string(atom_index)
                                + " is out of bounds for frame with "
@@ -569,191 +558,16 @@ std::vector<Point3> points_from_atom_indices(const chemfiles::Frame& frame,
     }
 
     const auto& position = positions.at(atom_index);
-    points.push_back(Point3(position[0], position[1], position[2]));
+    point_view.set_point(i, position[0], position[1], position[2]);
   }
-
-  return points;
 }
 
-std::vector<Point3> resolve_ca_points(const chemfiles::Frame& frame, const std::vector<ResidueSelector>& selectors)
+PointSoA resolve_ca_points(const chemfiles::Frame& frame, const std::vector<ResidueSelector>& selectors)
 {
   const auto atom_indices = resolve_ca_atom_indices(frame, selectors);
-  return points_from_atom_indices(frame, atom_indices, "selected C-alpha");
-}
-
-bool are_all_collinear(const std::vector<Point3>& points)
-{
-  if (points.size() < 3U) {
-    return true;
-  }
-
-  const auto& p0 = points.front();
-  const auto& p1 = points.at(1);
-  for (std::size_t i = 2; i < points.size(); ++i) {
-    if (!CGAL::collinear(p0, p1, points[i])) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool are_all_coplanar(const std::vector<Point3>& points)
-{
-  if (points.size() < 4U) {
-    return true;
-  }
-
-  const auto& p0 = points.front();
-  const auto& p1 = points.at(1);
-  const auto& p2 = points.at(2);
-  const auto plane = Plane3(p0, p1, p2);
-
-  for (std::size_t i = 3; i < points.size(); ++i) {
-    if (!plane.has_on(points[i])) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-std::vector<std::array<double, 6>> edges_from_mesh(const Mesh& mesh)
-{
-  std::vector<std::array<double, 6>> edges;
-  edges.reserve(mesh.number_of_edges());
-
-  std::set<std::pair<std::size_t, std::size_t>> edge_pairs;
-  for (const auto edge : mesh.edges()) {
-    const auto halfedge = mesh.halfedge(edge);
-    const auto source = mesh.source(halfedge);
-    const auto target = mesh.target(halfedge);
-
-    const auto source_point = mesh.point(source);
-    const auto target_point = mesh.point(target);
-
-    const auto source_coords = std::array<double, 3>{ CGAL::to_double(source_point.x()),
-                                                      CGAL::to_double(source_point.y()),
-                                                      CGAL::to_double(source_point.z()) };
-    const auto target_coords = std::array<double, 3>{ CGAL::to_double(target_point.x()),
-                                                      CGAL::to_double(target_point.y()),
-                                                      CGAL::to_double(target_point.z()) };
-
-    const auto min_vertex = std::min(source_coords, target_coords);
-    const auto max_vertex = std::max(source_coords, target_coords);
-
-    // Deduplicate edges in a deterministic way based on coordinates.
-    const auto source_hash = std::hash<double>{}(min_vertex[0]) ^ std::hash<double>{}(min_vertex[1])
-                             ^ std::hash<double>{}(min_vertex[2]);
-    const auto target_hash = std::hash<double>{}(max_vertex[0]) ^ std::hash<double>{}(max_vertex[1])
-                             ^ std::hash<double>{}(max_vertex[2]);
-    const auto edge_key = std::minmax(source_hash, target_hash);
-    if (!edge_pairs.insert(edge_key).second) {
-      continue;
-    }
-
-    edges.push_back({ min_vertex[0], min_vertex[1], min_vertex[2], max_vertex[0], max_vertex[1], max_vertex[2] });
-  }
-
-  return edges;
-}
-
-HullData compute_hull_data(const std::vector<Point3>& points)
-{
-  if (points.size() < 4U) {
-    throw std::runtime_error("need at least 4 points to build a 3D convex hull");
-  }
-
-  if (are_all_collinear(points)) {
-    throw std::runtime_error("selected points are collinear; cannot build a 3D convex hull");
-  }
-
-  if (are_all_coplanar(points)) {
-    throw std::runtime_error("selected points are coplanar; cannot build a 3D convex hull");
-  }
-
-  Mesh mesh;
-  CGAL::convex_hull_3(points.begin(), points.end(), mesh);
-
-  HullData hull_data;
-  hull_data.geometry.edges = edges_from_mesh(mesh);
-
-  // Collect vertices and bonds in a deterministic order from the mesh.
-  std::unordered_map<Mesh::Vertex_index, std::size_t> vertex_indices;
-  vertex_indices.reserve(mesh.number_of_vertices());
-
-  hull_data.geometry.vertices.reserve(mesh.number_of_vertices());
-  for (const auto v : mesh.vertices()) {
-    const auto p = mesh.point(v);
-    vertex_indices[v] = hull_data.geometry.vertices.size();
-    hull_data.geometry.vertices.push_back({ CGAL::to_double(p.x()), CGAL::to_double(p.y()), CGAL::to_double(p.z()) });
-  }
-
-  std::set<std::pair<std::size_t, std::size_t>> bonds;
-  for (const auto e : mesh.edges()) {
-    const auto h = mesh.halfedge(e);
-    const auto s = mesh.source(h);
-    const auto t = mesh.target(h);
-
-    const auto si = vertex_indices.at(s);
-    const auto ti = vertex_indices.at(t);
-    const auto ordered = std::minmax(si, ti);
-    bonds.insert({ ordered.first, ordered.second });
-  }
-  hull_data.geometry.bonds.assign(bonds.begin(), bonds.end());
-
-  // Use a point guaranteed to be inside the convex hull to orient face planes.
-  //
-  // A convex combination of the input points is inside their convex hull; the arithmetic
-  // mean is such a convex combination.
-  double cx = 0.0;
-  double cy = 0.0;
-  double cz = 0.0;
-  for (const auto& p : points) {
-    cx += CGAL::to_double(p.x());
-    cy += CGAL::to_double(p.y());
-    cz += CGAL::to_double(p.z());
-  }
-  const auto inv_n = 1.0 / static_cast<double>(points.size());
-  const Point3 interior_point(cx * inv_n, cy * inv_n, cz * inv_n);
-
-  // Build inward-oriented halfspaces from faces.
-  hull_data.halfspaces.reserve(mesh.number_of_faces());
-  for (const auto f : mesh.faces()) {
-    std::vector<Point3> face_points;
-    for (auto v : vertices_around_face(mesh.halfedge(f), mesh)) {
-      face_points.push_back(mesh.point(v));
-    }
-
-    if (face_points.size() < 3U) {
-      continue;
-    }
-
-    Plane3 plane(face_points[0], face_points[1], face_points[2]);
-
-    // Ensure plane is oriented inward: the interior point must be on the negative side (or on the plane).
-    //
-    // We intentionally avoid validating all input points here: with EPIK, plane constructions are
-    // inexact, and a strict check can spuriously classify points as being on the positive side,
-    // causing false hard failures on valid hulls.
-    if (plane.oriented_side(interior_point) == CGAL::ON_POSITIVE_SIDE) {
-      plane = plane.opposite();
-    }
-
-    hull_data.halfspaces.push_back(plane);
-  }
-
-  return hull_data;
-}
-
-bool point_inside_or_on_hull(const Point3& point, const std::vector<Plane3>& halfspaces)
-{
-  for (const auto& plane : halfspaces) {
-    if (plane.oriented_side(point) == CGAL::ON_POSITIVE_SIDE) {
-      return false;
-    }
-  }
-  return true;
+  PointSoA points;
+  fill_points_from_atom_indices(frame, atom_indices, "selected C-alpha", points);
+  return points;
 }
 
 std::vector<WaterOxygenRef> collect_water_oxygen_refs(const chemfiles::Frame& frame)
@@ -814,7 +628,7 @@ std::vector<WaterOxygenRef> collect_water_oxygen_refs(const Parm7Topology& topol
 }
 
 std::vector<std::int64_t> find_waters_inside_hull(const chemfiles::Frame& frame,
-                                                  const HullData& hull_data,
+                                                  const detail::HullData& hull_data,
                                                   const std::vector<WaterOxygenRef>& water_refs)
 {
   std::set<std::int64_t> residue_ids;
@@ -827,8 +641,7 @@ std::vector<std::int64_t> find_waters_inside_hull(const chemfiles::Frame& frame,
                                + std::to_string(positions.size()) + " atoms");
     }
     const auto& position = positions.at(water_ref.atom_index);
-    const auto point = Point3(position[0], position[1], position[2]);
-    if (point_inside_or_on_hull(point, hull_data.halfspaces)) {
+    if (detail::point_inside_or_on_hull(position[0], position[1], position[2], hull_data.halfspaces)) {
       residue_ids.insert(water_ref.resid);
     }
   }
@@ -1150,6 +963,100 @@ std::vector<ResidueSelector> parse_residue_selectors(std::string_view csv)
   }
 }
 
+PointSoA read_structure_points_by_atom_indices(const std::filesystem::path& input_path,
+                                               const std::vector<std::size_t>& atom_indices,
+                                               std::string_view label)
+{
+  try {
+    if (!std::filesystem::exists(input_path)) {
+      throw Error("input file does not exist: '" + input_path.string() + "'");
+    }
+
+    if (is_parm7_topology_path(input_path)) {
+      throw Error(
+        "parm7/prmtop topology files are only supported in trajectory mode: "
+        "watpocket <topology.parm7> <trajectory.nc> --resnums ...");
+    }
+
+    chemfiles::Trajectory trajectory(input_path.string(), 'r');
+    const auto frame = trajectory.read();
+
+    PointSoA points;
+    fill_points_from_atom_indices(frame, atom_indices, std::string(label), points);
+    return points;
+  } catch (const Error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw Error(e.what());
+  }
+}
+
+PointSoA read_trajectory_points_by_atom_indices(const std::filesystem::path& topology_path,
+                                                const std::filesystem::path& trajectory_path,
+                                                const std::size_t frame_number,
+                                                const std::vector<std::size_t>& atom_indices,
+                                                std::string_view label)
+{
+  try {
+    if (!std::filesystem::exists(topology_path)) {
+      throw Error("topology file does not exist: '" + topology_path.string() + "'");
+    }
+
+    if (!std::filesystem::exists(trajectory_path)) {
+      throw Error("trajectory file does not exist: '" + trajectory_path.string() + "'");
+    }
+
+    if (!is_netcdf_trajectory_path(trajectory_path)) {
+      throw Error("trajectory mode currently supports NetCDF trajectories (.nc) only");
+    }
+
+    if (frame_number == 0U) {
+      throw Error("frame number must be >= 1");
+    }
+
+    const auto topology_is_parm7 = is_parm7_topology_path(topology_path);
+    std::size_t topology_atom_count = 0;
+    if (topology_is_parm7) {
+      const auto parm7_topology = parse_parm7_topology(topology_path);
+      topology_atom_count = parm7_topology.atom_names.size();
+    } else {
+      chemfiles::Trajectory topology_trajectory(topology_path.string(), 'r');
+      const auto topology_frame = topology_trajectory.read();
+      topology_atom_count = topology_frame.size();
+    }
+
+    chemfiles::Trajectory trajectory(trajectory_path.string(), 'r');
+    if (!topology_is_parm7) {
+      trajectory.set_topology(topology_path.string());
+    }
+
+    const auto frame_count = trajectory.size();
+    if (frame_count == 0U) {
+      throw Error("trajectory contains no frames: '" + trajectory_path.string() + "'");
+    }
+
+    if (frame_number > frame_count) {
+      throw Error("requested frame " + std::to_string(frame_number) + " is out of range for trajectory with "
+                  + std::to_string(frame_count) + " frames");
+    }
+
+    const auto frame = trajectory.read_at(frame_number - 1U);
+    if (frame.size() != topology_atom_count) {
+      throw Error("atom-count mismatch between topology and trajectory: topology has "
+                  + std::to_string(topology_atom_count) + " atoms, trajectory frame "
+                  + std::to_string(frame_number) + " has " + std::to_string(frame.size()) + " atoms");
+    }
+
+    PointSoA points;
+    fill_points_from_atom_indices(frame, atom_indices, std::string(label), points);
+    return points;
+  } catch (const Error&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw Error(e.what());
+  }
+}
+
 StructureAnalysisResult analyze_structure_file(const std::filesystem::path& input_path,
                                               const std::vector<ResidueSelector>& selectors)
 {
@@ -1169,7 +1076,7 @@ StructureAnalysisResult analyze_structure_file(const std::filesystem::path& inpu
 
     StructureAnalysisResult result;
     const auto points = resolve_ca_points(frame, selectors);
-    const auto hull_data = compute_hull_data(points);
+    const auto hull_data = detail::compute_hull_data(points.view());
     result.hull = hull_data.geometry;
     const auto water_refs = collect_water_oxygen_refs(frame);
     result.water_residue_ids = find_waters_inside_hull(frame, hull_data, water_refs);
@@ -1262,6 +1169,7 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path& topology
 
     std::vector<std::size_t> waters_per_frame;
     std::unordered_map<std::int64_t, std::size_t> water_presence_counts;
+    PointSoA ca_points_buffer;
 
     std::size_t frame_number = 0;
     std::size_t successful_frames = 0;
@@ -1285,8 +1193,8 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path& topology
                                    + std::to_string(frame.size()));
         }
 
-        const auto points = points_from_atom_indices(frame, ca_atom_indices, "selected C-alpha");
-        const auto hull_data = compute_hull_data(points);
+        fill_points_from_atom_indices(frame, ca_atom_indices, "selected C-alpha", ca_points_buffer);
+        const auto hull_data = detail::compute_hull_data(ca_points_buffer.view());
         const auto water_residue_ids = find_waters_inside_hull(frame, hull_data, water_refs);
 
         if (csv_output) {
