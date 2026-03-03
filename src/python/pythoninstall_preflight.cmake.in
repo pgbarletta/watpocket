@@ -1,0 +1,12 @@
+execute_process(
+  COMMAND "@Python_EXECUTABLE@" -c "import importlib.metadata as m; m.version('watpocket')"
+  RESULT_VARIABLE watpocket_pkg_present_result
+  OUTPUT_QUIET
+  ERROR_QUIET)
+
+if(watpocket_pkg_present_result EQUAL 0)
+  message(
+    FATAL_ERROR
+      "pythoninstall aborted: 'watpocket' is already installed in '@Python_EXECUTABLE@'. "
+      "Uninstall it first (for example: '@Python_EXECUTABLE@ -m pip uninstall watpocket'), then retry.")
+endif()
