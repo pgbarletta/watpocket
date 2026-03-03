@@ -53,7 +53,7 @@
 │   ├── chemfiles/             # vendored dependency
 │   └── cgal/                  # vendored dependency
 ├── .codex/agents/             # Codex agent prompts (planner/mapper/refactorer)
-└── .github/workflows/         # CI, CodeQL, formatting, wasm
+└── .github/workflows/         # GitHub Actions workflows (currently disabled; no active workflow files)
 ```
 
 ### Build systems and entrypoints
@@ -447,12 +447,7 @@ flowchart LR
 - Draw output tests include content validation through `test/verify_draw_pdb_contains_waters.cmake`, asserting that generated draw PDBs contain water atoms for the WCN sample configuration.
 
 ### CI notes and platform caveats
-- GitHub Actions matrix includes Linux/macOS variants (clang/gcc) with Debug/Release combinations; Windows/msvc entries are disabled (source: `.github/workflows/ci.yml`).
-- CodeQL workflow builds C++ target on Ubuntu (source: `.github/workflows/codeql-analysis.yml`).
-- Linux CI jobs install `libboost-dev`, and macOS CI jobs install Homebrew `boost`, before CMake configure so vendored CGAL's required `find_package(Boost 1.74)` succeeds on GitHub-hosted runners (source: `.github/workflows/ci.yml`, `.github/workflows/codeql-analysis.yml`, `external/cgal/Installation/cmake/modules/CGAL_SetupBoost.cmake`).
-- In `ci.yml`, tests/coverage execution runs on non-Windows runners, and Codecov upload runs only when `runner.os != 'Windows'` and `secrets.CODECOV_TOKEN` is set (source: `.github/workflows/ci.yml`).
-- CI configure commands explicitly set `myproject_WARNINGS_AS_ERRORS=OFF` (via `${PROJECT_NAME}_WARNINGS_AS_ERRORS` in `ci.yml`/`codeql-analysis.yml`, and direct `myproject_WARNINGS_AS_ERRORS` in `wasm.yml`) to avoid hard-failing builds on warnings (source: `.github/workflows/ci.yml`, `.github/workflows/codeql-analysis.yml`, `.github/workflows/wasm.yml`, `.github/constants.env`).
-- `auto-clang-format.yml` checks out `github.head_ref` (PR source branch) to avoid detached-HEAD commit/push failures, and only runs `add-and-commit` for same-repository PRs (`github.event.pull_request.head.repo.full_name == github.repository`) (source: `.github/workflows/auto-clang-format.yml`).
+- GitHub Actions workflows are intentionally removed from `.github/workflows` to disable automatic CI runs/costs for this repository.
 - Sanitizers and static analyzers are enabled by default in top-level non-maintainer builds unless explicitly disabled (source: `ProjectOptions.cmake`, `cmake/Sanitizers.cmake`).
 - CPM bootstrap performs network download unless cached/offline-provided (source: `cmake/CPM.cmake`).
 
@@ -550,9 +545,5 @@ flowchart LR
 - `tests/data/wcn/run.sh`
 - `tests/data/wcn/sal.py`
 - `tests/data/wcn/resal.py`
-- `.github/workflows/auto-clang-format.yml`
-- `.github/workflows/ci.yml`
-- `.github/workflows/codeql-analysis.yml`
-- `.github/workflows/wasm.yml`
 - `.gitlab-ci.yml`
 - `.codex/agents/mapper.md`
