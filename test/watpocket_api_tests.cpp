@@ -46,6 +46,21 @@ void write_netcdf_from_pdb_frames(const fs::path& output_nc_path, const std::vec
   }
 }
 
+void write_netcdf_with_atom_count(const fs::path& output_nc_path, const std::size_t atom_count)
+{
+  chemfiles::Trajectory writer(output_nc_path.string(), 'w');
+  chemfiles::Frame frame;
+  frame.resize(atom_count);
+
+  auto positions = frame.positions();
+  for (std::size_t atom_index = 0; atom_index < atom_count; ++atom_index) {
+    frame[atom_index] = chemfiles::Atom("H");
+    positions[atom_index] = { static_cast<double>(atom_index), 0.0, 0.0 };
+  }
+
+  writer.write(frame);
+}
+
 void require_coordinates_match(const watpocket::PointSoA& points,
                                const chemfiles::Frame& frame,
                                const std::vector<std::size_t>& atom_indices)
@@ -149,7 +164,7 @@ TEST_CASE("parse_residue_selectors rejects empty selector", "[api]")
 
 TEST_CASE("read_structure_points_by_atom_indices returns selected coordinates in caller order", "[api]")
 {
-  const auto structure_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto structure_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(structure_path));
 
   const std::vector<std::size_t> atom_indices{ 0, 12, 12, 37 };
@@ -164,7 +179,7 @@ TEST_CASE("read_structure_points_by_atom_indices returns selected coordinates in
 
 TEST_CASE("read_structure_points_by_atom_indices accepts empty atom index list", "[api]")
 {
-  const auto structure_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto structure_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(structure_path));
 
   const auto points = watpocket::read_structure_points_by_atom_indices(structure_path, {});
@@ -173,7 +188,7 @@ TEST_CASE("read_structure_points_by_atom_indices accepts empty atom index list",
 
 TEST_CASE("read_structure_points_by_atom_indices reports invalid atom index with label", "[api]")
 {
-  const auto structure_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto structure_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(structure_path));
 
   try {
@@ -187,7 +202,7 @@ TEST_CASE("read_structure_points_by_atom_indices reports invalid atom index with
 
 TEST_CASE("read_structure_points_by_atom_indices rejects parm7 topology-only input", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/complex_wcn.parm7");
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
   REQUIRE(fs::exists(topology_path));
 
   REQUIRE_THROWS_AS(watpocket::read_structure_points_by_atom_indices(topology_path, { 0 }), watpocket::Error);
@@ -195,9 +210,9 @@ TEST_CASE("read_structure_points_by_atom_indices rejects parm7 topology-only inp
 
 TEST_CASE("read_trajectory_points_by_atom_indices reads requested 1-based frame from NetCDF", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame0_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame1_path = fixture_path("tests/data/wcn/1complex_wcn.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame0_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame1_path = fixture_path("test/data/wcn/1complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(frame0_path));
   REQUIRE(fs::exists(frame1_path));
@@ -218,8 +233,8 @@ TEST_CASE("read_trajectory_points_by_atom_indices reads requested 1-based frame 
 
 TEST_CASE("read_trajectory_points_by_atom_indices rejects frame number zero", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame0_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame0_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(frame0_path));
 
@@ -233,8 +248,8 @@ TEST_CASE("read_trajectory_points_by_atom_indices rejects frame number zero", "[
 
 TEST_CASE("read_trajectory_points_by_atom_indices validates frame range with requested and available counts", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame0_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame0_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(frame0_path));
 
@@ -253,8 +268,8 @@ TEST_CASE("read_trajectory_points_by_atom_indices validates frame range with req
 
 TEST_CASE("read_trajectory_points_by_atom_indices reports invalid atom index with label", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame0_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame0_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(frame0_path));
 
@@ -274,8 +289,8 @@ TEST_CASE("read_trajectory_points_by_atom_indices reports invalid atom index wit
 
 TEST_CASE("read_trajectory_points_by_atom_indices accepts empty atom index list", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame0_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame0_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(frame0_path));
 
@@ -289,9 +304,9 @@ TEST_CASE("read_trajectory_points_by_atom_indices accepts empty atom index list"
 
 TEST_CASE("read_trajectory_points_by_atom_indices is deterministic across repeated calls", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame0_path = fixture_path("tests/data/wcn/0complex_wcn.pdb");
-  const auto frame1_path = fixture_path("tests/data/wcn/1complex_wcn.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame0_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  const auto frame1_path = fixture_path("test/data/wcn/1complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(frame0_path));
   REQUIRE(fs::exists(frame1_path));
@@ -312,8 +327,8 @@ TEST_CASE("read_trajectory_points_by_atom_indices is deterministic across repeat
 
 TEST_CASE("read_trajectory_points_by_atom_indices rejects non-NetCDF trajectory extension", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/complex_wcn.parm7");
-  const auto non_netcdf_path = fixture_path("tests/data/wcn/traj.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
+  const auto non_netcdf_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
   REQUIRE(fs::exists(topology_path));
   REQUIRE(fs::exists(non_netcdf_path));
 
@@ -323,14 +338,12 @@ TEST_CASE("read_trajectory_points_by_atom_indices rejects non-NetCDF trajectory 
 
 TEST_CASE("read_trajectory_points_by_atom_indices reports topology-trajectory atom-count mismatch", "[api]")
 {
-  const auto topology_path = fixture_path("tests/data/wcn/complex_wcn.parm7");
-  const auto small_structure_path = fixture_path("tests/data/wcn/sal.pdb");
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
   REQUIRE(fs::exists(topology_path));
-  REQUIRE(fs::exists(small_structure_path));
 
   const auto mismatch_trajectory_path = unique_temp_nc_path("api-mismatch");
   TempFileGuard cleanup{ mismatch_trajectory_path };
-  write_netcdf_from_pdb_frames(mismatch_trajectory_path, { small_structure_path });
+  write_netcdf_with_atom_count(mismatch_trajectory_path, 1);
 
   try {
     (void)watpocket::read_trajectory_points_by_atom_indices(topology_path, mismatch_trajectory_path, 1, { 0 });

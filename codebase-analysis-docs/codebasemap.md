@@ -47,8 +47,9 @@
 ├── src/
 │   ├── watpocket_lib/         # watpocket library target (implementation)
 │   ├── watpocket/             # production CLI binary
-├── test/                      # template tests + CLI smoke tests
-├── tests/data/wcn/            # watpocket sample data + script examples
+├── test/                      # template tests + CLI smoke tests + integration scripts
+├── test/data/wcn/             # watpocket sample inputs + benchmark PyMOL scripts
+├── test/integration/wcn/      # integration runner + benchmark comparator
 ├── external/
 │   ├── chemfiles/             # vendored dependency
 │   └── cgal/                  # vendored dependency
@@ -179,7 +180,7 @@ main
   -> stdout summary + select line
 ```
 2. Single-structure, draw mode (`--draw` extension-based)
-   - Example script path shown in repo workflow data (`tests/data/wcn/run.sh` calling `-d sal.py`) (source: `tests/data/wcn/run.sh`).
+   - Integration runner path: `test/integration/wcn/run.sh` executes `watpocket` for `0complex_wcn.pdb` and `1complex_wcn.pdb`, writing `0complex_wcn.py`/`1complex_wcn.py` (source: `test/integration/wcn/run.sh`).
    - Additional branch:
 ```text
 ...same as above...
@@ -443,7 +444,10 @@ flowchart LR
   - `parm7` guardrails:
     - single-input `parm7` should fail with trajectory-mode guidance
     - chain-qualified selectors on `parm7` without `RESIDUE_CHAINID` should fail (source: `test/CMakeLists.txt`).
+- Integration regression test:
+  - `integration.wcn.pymol_scripts_match_benchmark` runs `test/integration/wcn/run.sh` on `test/data/wcn/0complex_wcn.pdb` and `test/data/wcn/1complex_wcn.pdb`, then compares generated scripts against benchmark files `test/data/wcn/0complex_wcn.py` and `test/data/wcn/1complex_wcn.py` via `test/integration/wcn/verify_outputs_match_benchmarks.cmake` (source: `test/CMakeLists.txt`, `test/integration/wcn/run.sh`, `test/integration/wcn/verify_outputs_match_benchmarks.cmake`).
 - Unit tests cover selector parsing, public `PointSoA`/view contracts, and exported point-reader APIs (structure + trajectory success/failure contracts, determinism, empty/duplicate index behavior) in `watpocket_api_tests`, alongside CLI smoke tests (source: `test/CMakeLists.txt`, `test/watpocket_api_tests.cpp`).
+- API fixture roots are under `test/data/wcn/`; mismatch-path coverage no longer depends on deleted fixture files and now writes a synthetic one-atom NetCDF frame in-test to validate topology/trajectory atom-count mismatch errors (source: `test/watpocket_api_tests.cpp`).
 - Draw output tests include content validation through `test/verify_draw_pdb_contains_waters.cmake`, asserting that generated draw PDBs contain water atoms for the WCN sample configuration.
 
 ### CI notes and platform caveats
@@ -542,8 +546,9 @@ flowchart LR
 - `README_building.md`
 - `README_dependencies.md`
 - `README_docker.md`
-- `tests/data/wcn/run.sh`
-- `tests/data/wcn/sal.py`
-- `tests/data/wcn/resal.py`
+- `test/data/wcn/0complex_wcn.py`
+- `test/data/wcn/1complex_wcn.py`
+- `test/integration/wcn/run.sh`
+- `test/integration/wcn/verify_outputs_match_benchmarks.cmake`
 - `.gitlab-ci.yml`
 - `.codex/agents/mapper.md`
