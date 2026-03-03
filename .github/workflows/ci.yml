@@ -160,6 +160,17 @@ jobs:
           gcovr: true
           opencppcoverage: true
 
+      - name: Install Boost headers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libboost-dev
+
+      - name: Install Boost headers (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install boost
+
       - name: Configure CMake
         run: |
           cmake -S . -B ./build -G "${{matrix.generator}}" -D${{ env.PROJECT_NAME }}_ENABLE_IPO=${{matrix.enable_ipo }} -DCMAKE_BUILD_TYPE:STRING=${{matrix.build_type}} -D${{ env.PROJECT_NAME }}_PACKAGING_MAINTAINER_MODE:BOOL=${{matrix.packaging_maintainer_mode}} -D${{ env.PROJECT_NAME }}_ENABLE_COVERAGE:BOOL=${{ matrix.build_type == 'Debug' }} -DGIT_SHA:STRING=${{ github.sha }}
@@ -178,12 +189,6 @@ jobs:
           ctest -C ${{matrix.build_type}}
           gcovr -j ${{env.nproc}} --root ../ --print-summary --xml-pretty --xml coverage.xml . --gcov-executable '${{ matrix.gcov_executable }}'
 
-      - name: Windows - Test and coverage
-        if: runner.os == 'Windows'
-        working-directory: ./build
-        run: |
-          OpenCppCoverage.exe --export_type cobertura:coverage.xml --cover_children -- ctest -C ${{matrix.build_type}}
-
       - name: CPack
         if: matrix.package_generator != ''
         working-directory: ./build
@@ -199,6 +204,7 @@ jobs:
 
 
       - name: Publish to codecov
+        if: runner.os != 'Windows'
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true # we weren't posting previously
