@@ -76,6 +76,38 @@ if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/0complex_wcn.pdb"
       ${CMAKE_CURRENT_SOURCE_DIR}/integration/wcn/verify_outputs_match_benchmarks.cmake)
 endif()
 
+if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/0.nc"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1.nc"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/0.nc.csv"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1.nc.csv")
+  add_test(
+    NAME integration.wcn.trajectory_0_csv_matches_benchmark
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DWATPOCKET_BIN=$<TARGET_FILE:watpocket>
+      -DTOPOLOGY_PATH=${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7
+      -DTRAJECTORY_PATH=${WATPOCKET_WCN_DATA_DIR}/0.nc
+      -DRESNUMS=164,128,160,55,167,61,42,65,66
+      -DBENCHMARK_CSV=${WATPOCKET_WCN_DATA_DIR}/0.nc.csv
+      -DOUTPUT_CSV=${CMAKE_CURRENT_BINARY_DIR}/integration/wcn/0.nc.csv
+      -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake)
+
+  add_test(
+    NAME integration.wcn.trajectory_1_csv_matches_benchmark
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DWATPOCKET_BIN=$<TARGET_FILE:watpocket>
+      -DTOPOLOGY_PATH=${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7
+      -DTRAJECTORY_PATH=${WATPOCKET_WCN_DATA_DIR}/1.nc
+      -DRESNUMS=164,128,160,55,167,61,42,65,66
+      -DBENCHMARK_CSV=${WATPOCKET_WCN_DATA_DIR}/1.nc.csv
+      -DOUTPUT_CSV=${CMAKE_CURRENT_BINARY_DIR}/integration/wcn/1.nc.csv
+      -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake)
+endif()
+
 if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc")
   add_test(
     NAME cli.trajectory_draw_writes_model_pdb
@@ -140,6 +172,31 @@ if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_
   set_tests_properties(
     cli.parm7_chain_selector_without_chainid_fails
     PROPERTIES PASS_REGULAR_EXPRESSION "has no RESIDUE_CHAINID section")
+endif()
+
+if(TARGET watpocket_ext
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1.nc"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1.nc.csv")
+  find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+
+  add_test(
+    NAME integration.python.wcn_trajectory_1nc
+    COMMAND
+      ${CMAKE_COMMAND}
+      -E
+      env
+      "PYTHONPATH=$<TARGET_FILE_DIR:watpocket_ext>"
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/integration_wcn_1nc.py"
+      --topology
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      --trajectory
+      "${WATPOCKET_WCN_DATA_DIR}/1.nc"
+      --benchmark
+      "${WATPOCKET_WCN_DATA_DIR}/1.nc.csv"
+      --resnums
+      "164,128,160,55,167,61,42,65,66")
 endif()
 
 add_executable(watpocket_api_tests watpocket_api_tests.cpp)
