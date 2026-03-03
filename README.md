@@ -145,3 +145,19 @@ watpocket topology.parm7 traj.nc --resnums 164,128,160,55,167,61,42,65,66 -o poc
 ```bash
 watpocket topology.parm7 traj.nc --resnums 164,128,160,55,167,61,42,65,66 -o pocket_waters.csv
 ```
+
+## Development
+
+Compile, preferably with python bindings:
+
+```bash
+cmake -B./build --preset release -DWATPOCKET_ENABLE_PYTHON_BINDINGS=ON
+cmake --build ./build --preset release
+```
+
+If you compiled with python bindings, install them in your current python environment and check that they are locatable:
+
+```bash
+cmake --install ./build --component pythoninstall
+python -c "import watpocket; print(watpocket.__file__)"
+```

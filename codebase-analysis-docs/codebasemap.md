@@ -1,7 +1,7 @@
 # Codebase Map: watpocket
 ## 0. Quick Start for Contributors
 ### Add a new analysis: starting points + checklist
-- Primary implementation file is `src/watpocket_lib/watpocket.cpp`; most watpocket logic (I/O, selection, callbacks, and writers) lives there, while CGAL hull operations are now isolated in `src/watpocket_lib/point_soa_cgal_adapter.cpp`. The CLI binary `src/watpocket/main.cpp` is a thin wrapper over the library API, and exported reader APIs provide non-CLI access to atom-indexed `PointSoA` extraction (source: `src/watpocket_lib/watpocket.cpp`, `src/watpocket_lib/point_soa_cgal_adapter.cpp`, `src/watpocket/main.cpp:main`, `include/watpocket/watpocket.hpp`).
+- Primary implementation file is `src/watpocket_lib/watpocket.cpp`; most watpocket logic (I/O, selection, trajectory warning capture, and writers) lives there, while CGAL hull operations are now isolated in `src/watpocket_lib/point_soa_cgal_adapter.cpp`. The CLI binary `src/watpocket/main.cpp` is a thin wrapper over the library API, and exported reader APIs provide non-CLI access to atom-indexed `PointSoA` extraction (source: `src/watpocket_lib/watpocket.cpp`, `src/watpocket_lib/point_soa_cgal_adapter.cpp`, `src/watpocket/main.cpp:main`, `include/watpocket/watpocket.hpp`).
 - Checklist:
   - Define CLI interface in `src/watpocket/main.cpp` using CLI11 (`app.add_option` / `app.add_flag`) (source: `src/watpocket/main.cpp:main`).
   - Keep selector parsing and residue resolution consistent across topology backends (`parse_residue_selectors`, CA resolution helpers) (source: `src/watpocket_lib/watpocket.cpp:parse_residue_selectors`, `src/watpocket_lib/watpocket.cpp:resolve_ca_atom_indices`).
@@ -22,7 +22,7 @@
 ### Debug CGAL robustness issues
 - Kernel is `CGAL::Exact_predicates_inexact_constructions_kernel` (EPIK), giving exact orientation predicates with inexact constructed coordinates (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp`).
 - Robustness gates before hull build: `<4 points`, `all collinear`, `all coplanar` are hard errors (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`).
-- Point classification treats boundary points as inside by rejecting only positive-side plane evaluations (source: `src/watpocket_lib/watpocket.cpp:detail::point_inside_or_on_hull`).
+- Point classification treats boundary points as inside by rejecting only positive-side plane evaluations (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:point_inside_or_on_hull`).
 
 ### Improve performance (I/O vs geometry) starting points
 - Structure mode reads one frame; trajectory mode streams all frames and performs hull/classification per frame, so runtime scales with frame count and water candidate count (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`).
@@ -57,14 +57,15 @@
 │   ├── chemfiles/             # vendored dependency
 │   └── cgal/                  # vendored dependency
 ├── .codex/agents/             # Codex agent prompts (planner/mapper/refactorer)
-└── .github/workflows/         # GitHub Actions workflows (currently disabled; no active workflow files)
+└── .github/                   # repo automation metadata (`actions/`, `dependabot.yml`, templates; no active `workflows/`)
 ```
 
 ### Build systems and entrypoints
 - Build system is CMake; top-level adds `configured_files`, `src`, and optionally `test` (source: `CMakeLists.txt`).
 - Runtime entrypoint for project deliverable is `src/watpocket/main.cpp` (`main`) (source: `src/watpocket/main.cpp:main`).
-- `src/CMakeLists.txt` builds `watpocket_lib` + `watpocket`, and conditionally adds `src/python` when `WATPOCKET_ENABLE_PYTHON_BINDINGS=ON` (auto-enabled under scikit-build) (source: `src/CMakeLists.txt`, `CMakeLists.txt`, `src/python/CMakeLists.txt`).
-- For VSCode, the `vscode-release`/`vscode-watpocket` CMake presets configure into `./build` and build only the `watpocket` target with sanitizers/analyzers disabled (matches `comp.sh`) (source: `CMakePresets.json`, `comp.sh`).
+- `src/CMakeLists.txt` currently builds `watpocket_lib` and `watpocket`, and conditionally adds `src/python` when `WATPOCKET_ENABLE_PYTHON_BINDINGS=ON` (source: `src/CMakeLists.txt`).
+- Local `release`/`debug` configure presets use `./build` with sanitizers/analyzers disabled; corresponding build presets build default targets (including test executables when `BUILD_TESTING=ON`) (source: `CMakePresets.json`).
+- `comp.sh` still builds only the `watpocket` target after configuring equivalent disabled-tooling flags (source: `comp.sh`).
 
 ### How chemfiles and CGAL are discovered/linked
 - CGAL: `find_package(CGAL CONFIG REQUIRED PATHS external/cgal NO_DEFAULT_PATH)` (source: `Dependencies.cmake`).
@@ -85,6 +86,9 @@
 - CMake options: sanitizers, static analyzers, ccache, coverage, IPO, hardening via `ProjectOptions.cmake` (source: `ProjectOptions.cmake`).
 - CMake option `WATPOCKET_ENABLE_PYTHON_BINDINGS` gates nanobind extension build in non-scikit workflows; scikit-build (`SKBUILD`) forces it on for wheel builds (source: `CMakeLists.txt`, `src/CMakeLists.txt`).
 - Python packaging surface is defined in `pyproject.toml` using `scikit-build-core` with build targets `watpocket`, `watpocket_ext`, and `watpocket_stub` (output module name `watpocket` plus generated `watpocket.pyi`, while keeping install rules satisfied); the extension installs with `RPATH=$ORIGIN/lib` so bundled `libwatpocket.so` resolves at import time, and editable/wheel builds default to `Release` with `clang-tidy`, `cppcheck`, and ASan/UBSan disabled via CMake defines for faster package builds (source: `pyproject.toml`, `src/python/CMakeLists.txt`, `ProjectOptions.cmake`).
+- Nanobind bindings in `src/python/bindings.cpp` mirror the current public trajectory API directly (`analyze_trajectory_files(...)` without callback parameters) and expose `TrajectorySummary` skip metadata (`has_skipped_frames`, `skipped_frame_warnings`) to Python.
+- When Python bindings are enabled, `src/python/CMakeLists.txt` adds an `ALL` aggregate target (`watpocket_python_bindings`) so regular default builds include both `watpocket_ext` and `watpocket_stub`.
+- Install behavior is split by build context in `src/python/CMakeLists.txt`: under `SKBUILD`, extension + stub install to package-root destinations used by wheel/editable packaging; under native CMake (non-`SKBUILD`), installs are exposed only through the `pythoninstall` component, which writes `watpocket_ext` + `watpocket.pyi` into the selected interpreter `platlib` path, installs `libwatpocket.so*` into `platlib/lib` (matching module `RPATH=$ORIGIN/lib`), and fails fast if `watpocket` is already installed in that interpreter (users must uninstall first).
 - Env/config affecting dependency download/cache:
   - `CPM_SOURCE_CACHE` env/CMake variable changes CPM download location (source: `cmake/CPM.cmake`).
 - Presets exist for multi-platform configure/test flows (source: `CMakePresets.json`).
@@ -156,18 +160,17 @@ flowchart TD
   LOOP --> FRAME[CA indices -> PointSoA -> hull -> water classification]
   FRAME -->|ok| CSV[Write CSV row (if enabled)]
   FRAME -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
-  FRAME -->|ok| CB[Callback: `on_frame` (if provided)]
-  FRAME -->|error| WARN[Callback: `on_warning`; skip frame]
+  FRAME -->|error| WARN[Record warning text in `TrajectorySummary::skipped_frame_warnings`; skip frame]
   LOOP --> STATS[Accumulate stats]
-  STATS --> RES2[`TrajectorySummary`]
-  RES2 --> OUT2[CLI prints stats + processed counts]
+  STATS --> RES2[`TrajectorySummary`\n(with `has_skipped_frames` + warning map)]
+  RES2 --> OUT2[CLI prints warnings + stats + processed counts]
 ```
 
 ### End-to-end data flow narrative
 - Inputs are parsed with CLI11 in `main()`.
 - Non-CLI callers can directly obtain CA or arbitrary atom subsets through `read_structure_points_by_atom_indices(...)` and `read_trajectory_points_by_atom_indices(...)` without exposing Chemfiles/CGAL in the public header.
 - For 1 positional file, the CLI calls `watpocket::analyze_structure_file(...)`; the library uses Chemfiles to read one frame and runs structure-mode analysis + optional draw writing.
-- For 2 positional files, the CLI calls `watpocket::analyze_trajectory_files(...)`; the library loads topology once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), caches CA/water atom indices, streams NetCDF frames, and writes one CSV row per successful frame.
+- For 2 positional files, the CLI calls `watpocket::analyze_trajectory_files(...)`; the library loads topology once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), caches CA/water atom indices, streams NetCDF frames, writes one CSV row per successful frame, and stores frame-local skip warnings in the returned `TrajectorySummary`.
 - Residue selectors are parsed and mapped to residue objects using topology-derived lookup tables; each selected residue must map to exactly one residue and exactly one `CA` atom.
 - CA coordinates are extracted into `watpocket::PointSoA` buffers and passed as `PointSoAView` to the private CGAL adapter.
 - The private adapter (`src/watpocket_lib/point_soa_cgal_adapter.cpp`) computes `CGAL::Surface_mesh` hull geometry and inward-oriented halfspaces.
@@ -201,7 +204,7 @@ main
   -> watpocket::parse_residue_selectors
   -> require `-o/--output` path
   -> validate optional `--draw` (trajectory accepts `.pdb` only)
-  -> watpocket::analyze_trajectory_files (CSV + optional draw PDB + callbacks)
+  -> watpocket::analyze_trajectory_files (CSV + optional draw PDB + summary warning capture)
   -> write_trajectory_statistics (CLI formatting)
 ```
 
@@ -210,7 +213,8 @@ main
 - Geometry robustness: explicit degeneracy guards + exact-predicate kernel + face-orientation correction in the private adapter (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`).
 - Determinism: uses deterministic containers/sorting for output IDs and deduplicated edges (`std::set`) (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`, `src/watpocket_lib/watpocket.cpp:find_waters_inside_hull`).
 - Performance: single-threaded loops; trajectory mode streams frames sequentially and performs hull/classification per frame (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`).
-- Error reporting: fatal errors throw `watpocket::Error` (caught and printed by the CLI), while trajectory frame-local compute failures emit warnings via callback and are skipped (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
+- Error reporting: fatal errors throw `watpocket::Error` (caught and printed by the CLI), trajectory frame-local compute failures are recorded in `TrajectorySummary::skipped_frame_warnings` and counted as skipped, and `analyze_trajectory_files(...)` throws if all processed frames fail analysis (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
+- Trajectory warning structure: per-frame compute + CSV/draw writes execute in a frame-local guarded block that returns optional water IDs; failed frames insert warning text keyed by frame number, and CLI prints warnings after receiving the summary (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
 
 ## 3. Domain Data Model
 ### Chemical view
@@ -346,7 +350,7 @@ flowchart LR
 - `parm7/prmtop` is trajectory-topology-only input; using it as the sole positional argument is a hard error (source: `src/watpocket/main.cpp:main`).
 - `-d/--draw` output extension must be `.py` or `.pdb`; in trajectory mode only `.pdb` is allowed, while `.py` additionally requires single-structure PDB/CIF input (source: `src/watpocket/main.cpp:main`, `is_drawable_structure_path`, `is_pymol_draw_output_path`, `is_pdb_draw_output_path`).
 - `-o/--output` is required in trajectory mode and invalid in single-structure mode (source: `src/watpocket/main.cpp:main`).
-- Boundary points count as inside by design (source: `src/watpocket_lib/watpocket.cpp:detail::point_inside_or_on_hull`).
+- Boundary points count as inside by design (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:point_inside_or_on_hull`).
 - Selection parser is strict integer parsing and fails on malformed tokens/spaces around empty fields (source: `src/watpocket_lib/watpocket.cpp:parse_int64`, `parse_selector_token`).
 
 ## 6. Analysis Kernels
@@ -372,7 +376,8 @@ flowchart LR
   - Identify water residues with oxygen atoms inside or on hull boundary; return sorted residue IDs.
   - Outputs are printed for structure mode by the CLI and serialized to CSV per frame for trajectory mode by the library; trajectory mode additionally returns aggregate stats for the CLI to print after all frames (source: `src/watpocket_lib/watpocket.cpp:collect_water_oxygen_refs`, `find_waters_inside_hull`, `write_csv_row`, `summarize_trajectory`, `src/watpocket/main.cpp:write_trajectory_statistics`).
 - Key files + symbols:
-  - `src/watpocket_lib/watpocket.cpp`: `collect_water_oxygen_refs`, `detail::point_inside_or_on_hull`, `find_waters_inside_hull`, `write_csv_row`.
+  - `src/watpocket_lib/watpocket.cpp`: `collect_water_oxygen_refs`, `find_waters_inside_hull`, `write_csv_row`.
+  - `src/watpocket_lib/point_soa_cgal_adapter.cpp`: `point_inside_or_on_hull`.
 - Inputs required:
   - Structure frame (single mode) or topology-derived atom refs + trajectory frame loop (NetCDF mode), where topology may come from chemfiles or parsed parm7.
 - Correctness notes:
@@ -431,7 +436,7 @@ flowchart LR
   - `cmake -S . -B build`
   - `cmake --build build --target watpocket --parallel <N>`
 - Project helper script:
-  - `comp.sh` configures Debug with sanitizers/analyzers/cache disabled, then builds only `watpocket` target (source: `comp.sh`).
+  - `comp.sh` configures Release with sanitizers/analyzers/cache disabled, then builds only `watpocket` target (source: `comp.sh`).
 - Top-level requires CMake 3.28 (`CMakeLists.txt`) while presets advertise minimum 3.21 (`CMakePresets.json`).
 
 ### Test strategy
@@ -506,7 +511,7 @@ flowchart LR
 
 ## 10. Index: Symbols → Files
 - `main` → `src/watpocket/main.cpp`: CLI orchestration and execution spine.
-- Public API surface (`watpocket::Error`, `PointSoA`/views, `ResidueSelector`, results, callbacks, exported point readers) → `include/watpocket/watpocket.hpp`.
+- Public API surface (`watpocket::Error`, `PointSoA`/views, `ResidueSelector`, results, trajectory summaries with warning map, exported point readers) → `include/watpocket/watpocket.hpp`.
 - Public API implementation:
   - `watpocket::build_version` / `parse_residue_selectors` / `read_structure_points_by_atom_indices` / `read_trajectory_points_by_atom_indices` / `analyze_structure_file` / `analyze_trajectory_files` / `write_pymol_draw_script` / `write_hull_pdb` → `src/watpocket_lib/watpocket.cpp`.
 - Internal library helpers:
