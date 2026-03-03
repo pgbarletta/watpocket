@@ -1,10 +1,20 @@
 flowchart TD
   CLI[watpocket CLI\n`src/watpocket/main.cpp`] --> MODE{1 or 2 positional args?}
+  EXT[External caller\n(public library API)] --> RAPI1[Library: `read_structure_points_by_atom_indices(...)`]
+  EXT --> RAPI2[Library: `read_trajectory_points_by_atom_indices(...)`]
+  RAPI1 --> RIO1[Chemfiles: open + read first frame]
+  RIO1 --> RPTS1[`fill_points_from_atom_indices(...)`]
+  RAPI2 --> RTOP[Load topology atom count\n(structure or parm7/prmtop)]
+  RAPI2 --> RTRJ[Open NetCDF trajectory + validate frame range]
+  RTRJ --> RFRAME[Read requested frame (1-based API)]
+  RTOP --> RFRAME
+  RFRAME --> RPTS2[`fill_points_from_atom_indices(...)`]
 
   MODE -->|1| API1[Library: `watpocket::analyze_structure_file(path, selectors)`]
   API1 --> IO1[Chemfiles: open + read first frame]
-  IO1 --> SEL1[Resolve CA points]
-  SEL1 --> GEO1[CGAL: convex hull + halfspaces]
+  IO1 --> SEL1[Resolve CA indices]
+  SEL1 --> SOA1[Fill `PointSoA` CA buffer]
+  SOA1 --> GEO1[Private CGAL adapter:\nconvex hull + halfspaces]
   GEO1 --> ANA1[Collect + classify waters inside hull]
   ANA1 --> RES1[`StructureAnalysisResult`\n(hull + water ids + PDB water atoms)]
   RES1 --> OUT1[CLI prints stdout summary]
@@ -21,7 +31,7 @@ flowchart TD
   API2 --> SAN[Sanity check: traj has frames + atom-count matches]
   SAN --> LOOP[Per-frame loop: read frame]
   CACHE --> LOOP
-  LOOP --> FRAME[CA points -> hull -> water classification]
+  LOOP --> FRAME[CA indices -> PointSoA -> hull -> water classification]
   FRAME -->|ok| CSV[Write CSV row (if enabled)]
   FRAME -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
   FRAME -->|ok| CB[Callback: `on_frame` (if provided)]

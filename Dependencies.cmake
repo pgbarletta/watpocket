@@ -21,6 +21,9 @@ function(myproject_setup_dependencies)
   if(NOT TARGET chemfiles)
     set(CHFL_BUILD_TESTS OFF CACHE BOOL "Build chemfiles unit tests" FORCE)
     set(CHFL_BUILD_DOCUMENTATION OFF CACHE BOOL "Build chemfiles documentation" FORCE)
+    # watpocket_lib is a shared library; force PIC for the vendored chemfiles
+    # subtree so static chemfiles objects are linkable into shared outputs.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     add_subdirectory(
       "${CMAKE_CURRENT_LIST_DIR}/external/chemfiles"
       "${CMAKE_CURRENT_BINARY_DIR}/external/chemfiles"

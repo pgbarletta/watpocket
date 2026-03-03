@@ -32,7 +32,7 @@ add_test(NAME cli.version_matches COMMAND watpocket --version)
 set_tests_properties(cli.version_matches PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}")
 
 get_filename_component(WATPOCKET_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-set(WATPOCKET_WCN_DATA_DIR "${WATPOCKET_SOURCE_ROOT}/tests/data/wcn")
+set(WATPOCKET_WCN_DATA_DIR "${WATPOCKET_SOURCE_ROOT}/test/data/wcn")
 if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb")
   add_test(
     NAME cli.draw_rejects_unknown_extension
@@ -57,6 +57,23 @@ if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.pdb")
       -DDRAW_OUT=${CMAKE_CURRENT_BINARY_DIR}/draw_mode.pdb
       -P
       ${CMAKE_CURRENT_SOURCE_DIR}/verify_draw_pdb_contains_waters.cmake)
+endif()
+
+if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/0complex_wcn.pdb"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1complex_wcn.pdb"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/0complex_wcn.py"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1complex_wcn.py")
+  add_test(
+    NAME integration.wcn.pymol_scripts_match_benchmark
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DWATPOCKET_BIN=$<TARGET_FILE:watpocket>
+      -DRUN_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/integration/wcn/run.sh
+      -DDATA_DIR=${WATPOCKET_WCN_DATA_DIR}
+      -DBENCHMARK_DIR=${WATPOCKET_WCN_DATA_DIR}
+      -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/integration/wcn
+      -P
+      ${CMAKE_CURRENT_SOURCE_DIR}/integration/wcn/verify_outputs_match_benchmarks.cmake)
 endif()
 
 if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc")
@@ -131,7 +148,9 @@ target_link_libraries(
   PRIVATE myproject::myproject_warnings
           myproject::myproject_options
           watpocket_lib
+          chemfiles
           Catch2::Catch2WithMain)
+target_compile_definitions(watpocket_api_tests PRIVATE WATPOCKET_SOURCE_ROOT="${WATPOCKET_SOURCE_ROOT}")
 
 myproject_configure_linker(watpocket_api_tests)
 

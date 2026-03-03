@@ -19,15 +19,21 @@ flowchart LR
 
   subgraph LIB[watpocket library (`src/watpocket_lib/watpocket.cpp`)]
     API[Public API\n`include/watpocket/watpocket.hpp`]
+    Readers[Exported point readers\n`read_*_points_by_atom_indices()`]
     Parse[Selector parsing\n`parse_residue_selectors()`]
     Lookup[Residue maps\n`build_residue_lookup()`]
-    CA[CA extraction\n`resolve_ca_atom_indices()`]
+    CA[CA extraction\n`resolve_ca_atom_indices()` + `fill_points_from_atom_indices()`]
     Water[Water refs/materialization\n`collect_water_oxygen_refs()`]
     WaterPDB[Water atom extraction for PDB\n`collect_water_atoms_for_pdb()`]
     CSV[CSV serializer\n`write_csv_row()`]
     Stats[Trajectory statistics\n(summary computed in library;\nCLI prints formatting)]
     HullPDB[PDB hull serializer\n`write_hull_pdb()` / `write_hull_pdb_model()`]
-    Classify[Hull membership\n`point_inside_or_on_hull()`]
+    Classify[Hull membership\n`detail::point_inside_or_on_hull()`]
+  end
+
+  subgraph BRIDGE[private CGAL adapter (`src/watpocket_lib/point_soa_cgal_adapter.cpp`)]
+    PMAP[Index/property-map adapter]
+    Hull[`detail::compute_hull_data()`]
   end
 
   subgraph CGAL[CGAL]
@@ -43,10 +49,12 @@ flowchart LR
   PFile --> PSec --> PTopo
 
   Args --> API
+  API --> Readers
 
   Top --> Lookup
   PTopo --> Lookup
   Pos --> CA
+  Pos --> Readers
   Parse --> CA
   Pos --> Water
   Pos --> WaterPDB
@@ -56,5 +64,5 @@ flowchart LR
   Classify --> Stats
   Classify --> HullPDB
 
-  CA --> Ker
-  Ker --> CH --> Mesh --> Plane --> Classify
+  CA --> PMAP --> Hull
+  Hull --> Ker --> CH --> Mesh --> Plane --> Classify

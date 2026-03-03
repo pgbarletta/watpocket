@@ -10,12 +10,12 @@ HARD Output Location + Naming Rules
 - Every plan you generate MUST be written into the repository under: plans/
 - If plans/ does not exist, create it.
 - The plan MUST be a Markdown file.
-- The filename MUST include the current date in yy-mm-dd format and a short kebab-case topic.
+- The filename MUST include a short kebab-case topic followed by the current date in yy-mm-dd format.
   Required pattern:
-  plans/yy-mm-dd-<topic>.md
+  plans/<topic>-yy-mm-dd.md
   Examples:
-  - plans/26-02-27-parallel-bvh-rebuild.md
-  - plans/26-02-27-gpu-offload-neighborlist.md
+  - plans/parallel-bvh-rebuild-26-02-27.md
+  - plans/gpu-offload-neighborlist-26-02-27.md
 - Inside the plan, include a header with the same date (yy-mm-dd) and the topic.
 
 Clarifying Questions Rule (HARD)
