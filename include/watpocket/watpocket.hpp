@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -267,12 +268,6 @@ struct StructureAnalysisResult
   std::vector<PdbAtomRecord> water_atoms_for_pdb;
 };
 
-struct TrajectoryFrameResult
-{
-  std::size_t frame = 0;// 1-based
-  std::vector<std::int64_t> water_residue_ids;
-};
-
 struct TrajectoryWaterPresence
 {
   std::int64_t resid = 0;
@@ -290,15 +285,10 @@ struct TrajectorySummary
   std::size_t max_waters = 0;
   double mean_waters = 0.0;
   double median_waters = 0.0;
+  bool has_skipped_frames = false;
 
   std::vector<TrajectoryWaterPresence> top_waters;
-};
-
-struct TrajectoryCallbacks
-{
-  void *user_data = nullptr;
-  void (*on_frame)(void *user_data, const TrajectoryFrameResult &result) = nullptr;
-  void (*on_warning)(void *user_data, std::string_view message) = nullptr;
+  std::unordered_map<std::size_t, std::string> skipped_frame_warnings;
 };
 
 [[nodiscard]] WATPOCKET_LIB_EXPORT std::string_view build_version() noexcept;
@@ -355,14 +345,16 @@ struct TrajectoryCallbacks
 // If `csv_output` is set, a CSV file is written with schema: frame,resnums,total_count
 // If `draw_output_pdb` is set, a multi-model PDB is written using MODEL/ENDMDL.
 //
-// Frame-local analysis errors are reported via callbacks (if provided) and counted as skipped frames.
+// Frame-local analysis errors are recorded in `TrajectorySummary::skipped_frame_warnings`
+// and counted as skipped frames.
+//
+// Throws watpocket::Error if all processed frames fail.
 [[nodiscard]] WATPOCKET_LIB_EXPORT TrajectorySummary analyze_trajectory_files(
   const std::filesystem::path &topology_path,
   const std::filesystem::path &trajectory_path,
   const std::vector<ResidueSelector> &selectors,
   const std::optional<std::filesystem::path> &csv_output,
-  const std::optional<std::filesystem::path> &draw_output_pdb,
-  const TrajectoryCallbacks &callbacks = {});
+  const std::optional<std::filesystem::path> &draw_output_pdb);
 
 // Draw writers (std-only API). These operate on watpocket-owned types and do not require Chemfiles.
 WATPOCKET_LIB_EXPORT void write_pymol_draw_script(const std::filesystem::path &input_path,

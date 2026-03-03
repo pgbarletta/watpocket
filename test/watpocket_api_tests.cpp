@@ -9,6 +9,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,49 @@ void write_netcdf_with_atom_count(const fs::path& output_nc_path, const std::siz
   }
 
   writer.write(frame);
+}
+
+std::vector<std::size_t> find_ca_atom_indices_for_residue_ids(const chemfiles::Frame& frame,
+                                                               const std::vector<std::int64_t>& residue_ids)
+{
+  const auto& topology = frame.topology();
+  const auto& residues = topology.residues();
+
+  std::vector<std::size_t> ca_atom_indices;
+  ca_atom_indices.reserve(residue_ids.size());
+
+  for (const auto residue_id : residue_ids) {
+    std::size_t matched_residue_index = 0;
+    std::size_t residue_match_count = 0;
+    for (std::size_t residue_index = 0; residue_index < residues.size(); ++residue_index) {
+      if (!residues[residue_index].id() || *residues[residue_index].id() != residue_id) { continue; }
+      matched_residue_index = residue_index;
+      ++residue_match_count;
+    }
+
+    if (residue_match_count != 1U) {
+      throw std::runtime_error(
+        "expected exactly one residue match for id " + std::to_string(residue_id) + ", got " + std::to_string(residue_match_count));
+    }
+
+    const auto& residue = topology.residue(matched_residue_index);
+    std::size_t ca_index = 0;
+    std::size_t ca_count = 0;
+    for (const auto atom_index : residue) {
+      if (frame[atom_index].name() != "CA") { continue; }
+      ca_index = atom_index;
+      ++ca_count;
+    }
+
+    if (ca_count != 1U) {
+      throw std::runtime_error(
+        "expected exactly one CA atom for residue id " + std::to_string(residue_id) + ", got " + std::to_string(ca_count));
+    }
+
+    ca_atom_indices.push_back(ca_index);
+  }
+
+  return ca_atom_indices;
 }
 
 void require_coordinates_match(const watpocket::PointSoA& points,
@@ -350,5 +394,76 @@ TEST_CASE("read_trajectory_points_by_atom_indices reports topology-trajectory at
     FAIL("Expected watpocket::Error");
   } catch (const watpocket::Error& e) {
     REQUIRE_THAT(e.what(), ContainsSubstring("atom-count mismatch between topology and trajectory"));
+  }
+}
+
+TEST_CASE("analyze_trajectory_files records skipped-frame warnings in summary", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  REQUIRE(fs::exists(topology_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55");
+  chemfiles::Trajectory topology_reader(topology_path.string(), 'r');
+  const auto good_frame = topology_reader.read();
+  chemfiles::Trajectory topology_reader_for_bad(topology_path.string(), 'r');
+  auto bad_frame = topology_reader_for_bad.read();
+
+  const auto ca_indices = find_ca_atom_indices_for_residue_ids(good_frame, { 164, 128, 160, 55 });
+  REQUIRE(ca_indices.size() == 4U);
+
+  auto positions = bad_frame.positions();
+  for (std::size_t i = 0; i < ca_indices.size(); ++i) {
+    positions[ca_indices[i]] = { static_cast<double>(i), 0.0, 0.0 };
+  }
+
+  const auto trajectory_path = unique_temp_nc_path("api-analyze-skipped");
+  TempFileGuard cleanup{ trajectory_path };
+  {
+    chemfiles::Trajectory writer(trajectory_path.string(), 'w');
+    writer.write(good_frame);
+    writer.write(bad_frame);
+  }
+
+  const auto summary =
+    watpocket::analyze_trajectory_files(topology_path, trajectory_path, selectors, std::nullopt, std::nullopt);
+
+  REQUIRE(summary.frames_processed == 2U);
+  REQUIRE(summary.frames_successful == 1U);
+  REQUIRE(summary.frames_skipped == 1U);
+  REQUIRE(summary.has_skipped_frames);
+  REQUIRE(summary.skipped_frame_warnings.size() == 1U);
+  REQUIRE(summary.skipped_frame_warnings.contains(2U));
+  REQUIRE_THAT(summary.skipped_frame_warnings.at(2U), ContainsSubstring("Warning: skipping frame 2:"));
+}
+
+TEST_CASE("analyze_trajectory_files throws when all frames fail analysis", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  REQUIRE(fs::exists(topology_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55");
+  chemfiles::Trajectory topology_reader(topology_path.string(), 'r');
+  auto bad_frame = topology_reader.read();
+
+  const auto ca_indices = find_ca_atom_indices_for_residue_ids(bad_frame, { 164, 128, 160, 55 });
+  REQUIRE(ca_indices.size() == 4U);
+
+  auto positions = bad_frame.positions();
+  for (std::size_t i = 0; i < ca_indices.size(); ++i) {
+    positions[ca_indices[i]] = { static_cast<double>(i), 0.0, 0.0 };
+  }
+
+  const auto trajectory_path = unique_temp_nc_path("api-analyze-all-fail");
+  TempFileGuard cleanup{ trajectory_path };
+  {
+    chemfiles::Trajectory writer(trajectory_path.string(), 'w');
+    writer.write(bad_frame);
+  }
+
+  try {
+    (void)watpocket::analyze_trajectory_files(topology_path, trajectory_path, selectors, std::nullopt, std::nullopt);
+    FAIL("Expected watpocket::Error");
+  } catch (const watpocket::Error& e) {
+    REQUIRE_THAT(e.what(), ContainsSubstring("all trajectory frames failed analysis"));
   }
 }

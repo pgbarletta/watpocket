@@ -969,8 +969,7 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path &topology
   const std::filesystem::path &trajectory_path,
   const std::vector<ResidueSelector> &selectors,
   const std::optional<std::filesystem::path> &csv_output,
-  const std::optional<std::filesystem::path> &draw_output_pdb,
-  const TrajectoryCallbacks &callbacks)
+  const std::optional<std::filesystem::path> &draw_output_pdb)
 {
   try {
     if (!std::filesystem::exists(topology_path)) {
@@ -1044,6 +1043,7 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path &topology
     std::size_t frame_number = 0;
     std::size_t successful_frames = 0;
     std::size_t skipped_frames = 0;
+    std::unordered_map<std::size_t, std::string> skipped_frame_warnings;
 
     while (!trajectory.done()) {
       const auto current_frame_number = frame_number + 1U;
@@ -1055,50 +1055,57 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path &topology
       }
       frame_number = current_frame_number;
 
-      try {
-        if (frame.size() != topology_atom_count) {
-          throw std::runtime_error("atom-count mismatch: expected " + std::to_string(topology_atom_count)
-                                   + " atoms from topology but frame has " + std::to_string(frame.size()));
-        }
-
-        fill_points_from_atom_indices(frame, ca_atom_indices, "selected C-alpha", ca_points_buffer);
-        const auto hull_data = detail::compute_hull_data(ca_points_buffer.view());
-        const auto water_residue_ids = find_waters_inside_hull(frame, hull_data, water_refs);
-
-        if (csv_output) { write_csv_row(csv_file, current_frame_number, water_residue_ids); }
-
-        if (draw_output_pdb) {
-          std::vector<PdbAtomRecord> water_atoms;
-          if (topology_is_parm7) {
-            water_atoms = collect_water_atoms_for_pdb(frame, *parm7_topology, water_residue_ids);
-          } else {
-            water_atoms = collect_water_atoms_for_pdb(frame, water_residue_ids);
+      const auto computed_water_residue_ids = [&]() -> std::optional<std::vector<std::int64_t>> {
+        try {
+          if (frame.size() != topology_atom_count) {
+            throw std::runtime_error("atom-count mismatch: expected " + std::to_string(topology_atom_count)
+                                     + " atoms from topology but frame has " + std::to_string(frame.size()));
           }
-          write_hull_pdb_model(draw_file, hull_data.geometry, current_frame_number, water_atoms);
-        }
 
-        if (callbacks.on_frame) {
-          callbacks.on_frame(callbacks.user_data, TrajectoryFrameResult{ current_frame_number, water_residue_ids });
-        }
+          fill_points_from_atom_indices(frame, ca_atom_indices, "selected C-alpha", ca_points_buffer);
+          const auto hull_data = detail::compute_hull_data(ca_points_buffer.view());
+          const auto water_residue_ids = find_waters_inside_hull(frame, hull_data, water_refs);
 
-        waters_per_frame.push_back(water_residue_ids.size());
-        for (const auto resid : water_residue_ids) { ++water_presence_counts[resid]; }
-        ++successful_frames;
-      } catch (const std::exception &e) {
-        ++skipped_frames;
-        if (callbacks.on_warning) {
-          callbacks.on_warning(
-            callbacks.user_data, "Warning: skipping frame " + std::to_string(current_frame_number) + ": " + e.what());
+          if (csv_output) { write_csv_row(csv_file, current_frame_number, water_residue_ids); }
+
+          if (draw_output_pdb) {
+            std::vector<PdbAtomRecord> water_atoms;
+            if (topology_is_parm7) {
+              water_atoms = collect_water_atoms_for_pdb(frame, *parm7_topology, water_residue_ids);
+            } else {
+              water_atoms = collect_water_atoms_for_pdb(frame, water_residue_ids);
+            }
+            write_hull_pdb_model(draw_file, hull_data.geometry, current_frame_number, water_atoms);
+          }
+
+          return water_residue_ids;
+        } catch (const std::exception &e) {
+          ++skipped_frames;
+          skipped_frame_warnings[current_frame_number] =
+            "Warning: skipping frame " + std::to_string(current_frame_number) + ": " + e.what();
+          return std::nullopt;
         }
-      }
+      }();
+
+      if (!computed_water_residue_ids) { continue; }
+      const auto &water_residue_ids = *computed_water_residue_ids;
+
+      waters_per_frame.push_back(water_residue_ids.size());
+      for (const auto resid : water_residue_ids) { ++water_presence_counts[resid]; }
+      ++successful_frames;
     }
 
     if (draw_output_pdb) { draw_file << "END\n"; }
+    if (successful_frames == 0U) {
+      throw Error("all trajectory frames failed analysis (" + std::to_string(frame_number) + " frames skipped)");
+    }
 
     TrajectorySummary summary = summarize_trajectory(waters_per_frame, water_presence_counts);
     summary.frames_processed = frame_number;
     summary.frames_successful = successful_frames;
     summary.frames_skipped = skipped_frames;
+    summary.has_skipped_frames = !skipped_frame_warnings.empty();
+    summary.skipped_frame_warnings = std::move(skipped_frame_warnings);
 
     return summary;
   } catch (const Error &) {

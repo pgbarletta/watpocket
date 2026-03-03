@@ -1,7 +1,7 @@
 # Codebase Map: watpocket
 ## 0. Quick Start for Contributors
 ### Add a new analysis: starting points + checklist
-- Primary implementation file is `src/watpocket_lib/watpocket.cpp`; most watpocket logic (I/O, selection, callbacks, and writers) lives there, while CGAL hull operations are now isolated in `src/watpocket_lib/point_soa_cgal_adapter.cpp`. The CLI binary `src/watpocket/main.cpp` is a thin wrapper over the library API, and exported reader APIs provide non-CLI access to atom-indexed `PointSoA` extraction (source: `src/watpocket_lib/watpocket.cpp`, `src/watpocket_lib/point_soa_cgal_adapter.cpp`, `src/watpocket/main.cpp:main`, `include/watpocket/watpocket.hpp`).
+- Primary implementation file is `src/watpocket_lib/watpocket.cpp`; most watpocket logic (I/O, selection, trajectory warning capture, and writers) lives there, while CGAL hull operations are now isolated in `src/watpocket_lib/point_soa_cgal_adapter.cpp`. The CLI binary `src/watpocket/main.cpp` is a thin wrapper over the library API, and exported reader APIs provide non-CLI access to atom-indexed `PointSoA` extraction (source: `src/watpocket_lib/watpocket.cpp`, `src/watpocket_lib/point_soa_cgal_adapter.cpp`, `src/watpocket/main.cpp:main`, `include/watpocket/watpocket.hpp`).
 - Checklist:
   - Define CLI interface in `src/watpocket/main.cpp` using CLI11 (`app.add_option` / `app.add_flag`) (source: `src/watpocket/main.cpp:main`).
   - Keep selector parsing and residue resolution consistent across topology backends (`parse_residue_selectors`, CA resolution helpers) (source: `src/watpocket_lib/watpocket.cpp:parse_residue_selectors`, `src/watpocket_lib/watpocket.cpp:resolve_ca_atom_indices`).
@@ -65,6 +65,8 @@
 - Runtime entrypoint for project deliverable is `src/watpocket/main.cpp` (`main`) (source: `src/watpocket/main.cpp:main`).
 - `src/CMakeLists.txt` builds `watpocket_lib` + `watpocket`, and conditionally adds `src/python` when `WATPOCKET_ENABLE_PYTHON_BINDINGS=ON` (auto-enabled under scikit-build) (source: `src/CMakeLists.txt`, `CMakeLists.txt`, `src/python/CMakeLists.txt`).
 - For VSCode, the `vscode-release`/`vscode-watpocket` CMake presets configure into `./build` and build only the `watpocket` target with sanitizers/analyzers disabled (matches `comp.sh`) (source: `CMakePresets.json`, `comp.sh`).
+- `src/CMakeLists.txt` currently builds `watpocket_lib` and `watpocket` (source: `src/CMakeLists.txt`).
+- For VSCode, the `vscode-release`/`vscode-watpocket` CMake presets configure into `./build` and the named `release`/`debug` build presets now build default targets (including test executables when `BUILD_TESTING=ON`) with sanitizers/analyzers disabled in these presets (source: `CMakePresets.json`, `comp.sh`).
 
 ### How chemfiles and CGAL are discovered/linked
 - CGAL: `find_package(CGAL CONFIG REQUIRED PATHS external/cgal NO_DEFAULT_PATH)` (source: `Dependencies.cmake`).
@@ -156,18 +158,17 @@ flowchart TD
   LOOP --> FRAME[CA indices -> PointSoA -> hull -> water classification]
   FRAME -->|ok| CSV[Write CSV row (if enabled)]
   FRAME -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
-  FRAME -->|ok| CB[Callback: `on_frame` (if provided)]
-  FRAME -->|error| WARN[Callback: `on_warning`; skip frame]
+  FRAME -->|error| WARN[Record warning text in `TrajectorySummary::skipped_frame_warnings`; skip frame]
   LOOP --> STATS[Accumulate stats]
-  STATS --> RES2[`TrajectorySummary`]
-  RES2 --> OUT2[CLI prints stats + processed counts]
+  STATS --> RES2[`TrajectorySummary`\n(with `has_skipped_frames` + warning map)]
+  RES2 --> OUT2[CLI prints warnings + stats + processed counts]
 ```
 
 ### End-to-end data flow narrative
 - Inputs are parsed with CLI11 in `main()`.
 - Non-CLI callers can directly obtain CA or arbitrary atom subsets through `read_structure_points_by_atom_indices(...)` and `read_trajectory_points_by_atom_indices(...)` without exposing Chemfiles/CGAL in the public header.
 - For 1 positional file, the CLI calls `watpocket::analyze_structure_file(...)`; the library uses Chemfiles to read one frame and runs structure-mode analysis + optional draw writing.
-- For 2 positional files, the CLI calls `watpocket::analyze_trajectory_files(...)`; the library loads topology once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), caches CA/water atom indices, streams NetCDF frames, and writes one CSV row per successful frame.
+- For 2 positional files, the CLI calls `watpocket::analyze_trajectory_files(...)`; the library loads topology once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), caches CA/water atom indices, streams NetCDF frames, writes one CSV row per successful frame, and stores frame-local skip warnings in the returned `TrajectorySummary`.
 - Residue selectors are parsed and mapped to residue objects using topology-derived lookup tables; each selected residue must map to exactly one residue and exactly one `CA` atom.
 - CA coordinates are extracted into `watpocket::PointSoA` buffers and passed as `PointSoAView` to the private CGAL adapter.
 - The private adapter (`src/watpocket_lib/point_soa_cgal_adapter.cpp`) computes `CGAL::Surface_mesh` hull geometry and inward-oriented halfspaces.
@@ -201,7 +202,7 @@ main
   -> watpocket::parse_residue_selectors
   -> require `-o/--output` path
   -> validate optional `--draw` (trajectory accepts `.pdb` only)
-  -> watpocket::analyze_trajectory_files (CSV + optional draw PDB + callbacks)
+  -> watpocket::analyze_trajectory_files (CSV + optional draw PDB + summary warning capture)
   -> write_trajectory_statistics (CLI formatting)
 ```
 
@@ -210,7 +211,8 @@ main
 - Geometry robustness: explicit degeneracy guards + exact-predicate kernel + face-orientation correction in the private adapter (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`).
 - Determinism: uses deterministic containers/sorting for output IDs and deduplicated edges (`std::set`) (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`, `src/watpocket_lib/watpocket.cpp:find_waters_inside_hull`).
 - Performance: single-threaded loops; trajectory mode streams frames sequentially and performs hull/classification per frame (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`).
-- Error reporting: fatal errors throw `watpocket::Error` (caught and printed by the CLI), while trajectory frame-local compute failures emit warnings via callback and are skipped (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
+- Error reporting: fatal errors throw `watpocket::Error` (caught and printed by the CLI), trajectory frame-local compute failures are recorded in `TrajectorySummary::skipped_frame_warnings` and counted as skipped, and `analyze_trajectory_files(...)` throws if all processed frames fail analysis (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
+- Trajectory warning structure: per-frame compute + CSV/draw writes execute in a frame-local guarded block that returns optional water IDs; failed frames insert warning text keyed by frame number, and CLI prints warnings after receiving the summary (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
 
 ## 3. Domain Data Model
 ### Chemical view
@@ -506,7 +508,7 @@ flowchart LR
 
 ## 10. Index: Symbols → Files
 - `main` → `src/watpocket/main.cpp`: CLI orchestration and execution spine.
-- Public API surface (`watpocket::Error`, `PointSoA`/views, `ResidueSelector`, results, callbacks, exported point readers) → `include/watpocket/watpocket.hpp`.
+- Public API surface (`watpocket::Error`, `PointSoA`/views, `ResidueSelector`, results, trajectory summaries with warning map, exported point readers) → `include/watpocket/watpocket.hpp`.
 - Public API implementation:
   - `watpocket::build_version` / `parse_residue_selectors` / `read_structure_points_by_atom_indices` / `read_trajectory_points_by_atom_indices` / `analyze_structure_file` / `analyze_trajectory_files` / `write_pymol_draw_script` / `write_hull_pdb` → `src/watpocket_lib/watpocket.cpp`.
 - Internal library helpers:
