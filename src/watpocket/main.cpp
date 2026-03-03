@@ -17,69 +17,61 @@ namespace {
 
 std::string lowercase_copy(std::string text)
 {
-  std::transform(text.begin(),
-                 text.end(),
-                 text.begin(),
-                 [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::transform(
+    text.begin(), text.end(), text.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return text;
 }
 
-bool is_netcdf_trajectory_path(const std::filesystem::path& path)
+bool is_netcdf_trajectory_path(const std::filesystem::path &path)
 {
   return lowercase_copy(path.extension().string()) == ".nc";
 }
 
-bool is_parm7_topology_path(const std::filesystem::path& path)
+bool is_parm7_topology_path(const std::filesystem::path &path)
 {
   const auto ext = lowercase_copy(path.extension().string());
   return ext == ".parm7" || ext == ".prmtop";
 }
 
-bool is_pymol_draw_output_path(const std::filesystem::path& path)
+bool is_pymol_draw_output_path(const std::filesystem::path &path)
 {
   return lowercase_copy(path.extension().string()) == ".py";
 }
 
-bool is_pdb_draw_output_path(const std::filesystem::path& path)
+bool is_pdb_draw_output_path(const std::filesystem::path &path)
 {
   return lowercase_copy(path.extension().string()) == ".pdb";
 }
 
-bool is_drawable_structure_path(const std::filesystem::path& path)
+bool is_drawable_structure_path(const std::filesystem::path &path)
 {
   const auto ext = lowercase_copy(path.extension().string());
   return ext == ".pdb" || ext == ".cif" || ext == ".mmcif";
 }
 
-std::string join_residue_ids(const std::vector<std::int64_t>& ids, const char sep)
+std::string join_residue_ids(const std::vector<std::int64_t> &ids, const char sep)
 {
   std::ostringstream out;
   for (std::size_t i = 0; i < ids.size(); ++i) {
-    if (i != 0U) {
-      out << sep;
-    }
+    if (i != 0U) { out << sep; }
     out << ids[i];
   }
   return out.str();
 }
 
-std::string make_pymol_resi_selector(const std::vector<std::int64_t>& ids)
+std::string make_pymol_resi_selector(const std::vector<std::int64_t> &ids)
 {
-  if (ids.empty()) {
-    return "none";
-  }
+  if (ids.empty()) { return "none"; }
 
   std::ostringstream out;
   for (std::size_t i = 0; i < ids.size(); ++i) {
-    if (i != 0U) {
-      out << '+';
-    }
+    if (i != 0U) { out << '+'; }
     out << ids[i];
   }
   return "resi " + out.str();
 }
 
-void write_trajectory_statistics(std::ostream& out, const watpocket::TrajectorySummary& summary)
+void write_trajectory_statistics(std::ostream &out, const watpocket::TrajectorySummary &summary)
 {
   if (summary.frames_successful == 0U) {
     out << "Trajectory water-pocket statistics: no frames were processed.\n";
@@ -102,20 +94,20 @@ void write_trajectory_statistics(std::ostream& out, const watpocket::TrajectoryS
 
   out << std::setprecision(4);
   for (std::size_t index = 0; index < summary.top_waters.size(); ++index) {
-    const auto& item = summary.top_waters[index];
+    const auto &item = summary.top_waters[index];
     out << "    " << (index + 1U) << ". " << item.resid << " -> " << item.fraction << '\n';
   }
 }
 
-void on_trajectory_warning(void* user_data, std::string_view message)
+void on_trajectory_warning(void *user_data, std::string_view message)
 {
-  auto& out = *static_cast<std::ostream*>(user_data);
+  auto &out = *static_cast<std::ostream *>(user_data);
   out << message << '\n';
 }
 
-} // namespace
+}// namespace
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
   CLI::App app("watpocket: build a convex hull from selected residue C-alpha atoms");
 
@@ -125,12 +117,9 @@ int main(int argc, char** argv)
   std::string csv_output;
 
   app.set_version_flag("--version", std::string(myproject::cmake::project_version));
-  app.add_option("inputs", inputs, "Input files: <structure> or <topology> <trajectory>")
-    ->required()
-    ->expected(1, 2);
+  app.add_option("inputs", inputs, "Input files: <structure> or <topology> <trajectory>")->required()->expected(1, 2);
   app.add_option("--resnums", resnums, "Comma-separated residue selectors, e.g. 12,15 or A:12,B:18")->required();
-  app.add_option(
-    "-d,--draw",
+  app.add_option("-d,--draw",
     draw_output,
     "Write draw output. Single-structure mode: .py (PyMOL script) or .pdb (hull PDB). "
     "Trajectory mode: .pdb only (hull per frame using MODEL/ENDMDL).");
@@ -138,7 +127,7 @@ int main(int argc, char** argv)
 
   try {
     app.parse(argc, argv);
-  } catch (const CLI::ParseError& e) {
+  } catch (const CLI::ParseError &e) {
     return app.exit(e);
   }
 
@@ -176,15 +165,13 @@ int main(int argc, char** argv)
       callbacks.on_warning = &on_trajectory_warning;
 
       const auto summary = watpocket::analyze_trajectory_files(topology_path,
-                                                               trajectory_path,
-                                                               selectors,
-                                                               std::filesystem::path(csv_output),
-                                                               has_draw_output ? std::optional(draw_path) : std::nullopt,
-                                                               callbacks);
+        trajectory_path,
+        selectors,
+        std::filesystem::path(csv_output),
+        has_draw_output ? std::optional(draw_path) : std::nullopt,
+        callbacks);
 
-      if (has_draw_output) {
-        std::cout << "Wrote trajectory hull PDB: " << draw_output << '\n';
-      }
+      if (has_draw_output) { std::cout << "Wrote trajectory hull PDB: " << draw_output << '\n'; }
 
       std::cout << "Wrote trajectory CSV: " << csv_output << '\n';
       write_trajectory_statistics(std::cout, summary);
@@ -208,9 +195,7 @@ int main(int argc, char** argv)
       const auto draw_path = std::filesystem::path(draw_output);
       const auto draw_is_py = is_pymol_draw_output_path(draw_path);
       const auto draw_is_pdb = is_pdb_draw_output_path(draw_path);
-      if (!draw_is_py && !draw_is_pdb) {
-        throw watpocket::Error("--draw output path must end with .py or .pdb");
-      }
+      if (!draw_is_py && !draw_is_pdb) { throw watpocket::Error("--draw output path must end with .py or .pdb"); }
 
       if (draw_is_py && !is_drawable_structure_path(input_path)) {
         throw watpocket::Error("--draw .py output requires a single PDB/CIF input (.pdb, .cif, .mmcif)");
@@ -244,9 +229,8 @@ int main(int argc, char** argv)
     std::cout << "Convex hull built from " << selectors.size() << " residues with " << result.hull.edges.size()
               << " edges.\n";
     return 0;
-  } catch (const std::exception& e) {
+  } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << '\n';
     return 1;
   }
 }
-

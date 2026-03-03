@@ -64,7 +64,7 @@
 
 ### How chemfiles and CGAL are discovered/linked
 - CGAL: `find_package(CGAL CONFIG REQUIRED PATHS external/cgal NO_DEFAULT_PATH)` (source: `Dependencies.cmake`).
-- Chemfiles: vendored subdirectory `add_subdirectory(external/chemfiles ...)` with tests/docs disabled (source: `Dependencies.cmake`).
+- Chemfiles: vendored subdirectory `add_subdirectory(external/chemfiles ...)` with tests/docs disabled; dependency setup forces `CMAKE_POSITION_INDEPENDENT_CODE ON` before adding chemfiles so its static objects can link into shared `watpocket_lib` (source: `Dependencies.cmake`, `src/watpocket_lib/CMakeLists.txt`).
 - CPM remains enabled and currently fetches Catch2 + CLI11 if absent (source: `Dependencies.cmake`, `cmake/CPM.cmake`).
 - CPM bootstrap always performs a `file(DOWNLOAD ...)` for `CPM.cmake` unless provided via cache location/environment path (source: `cmake/CPM.cmake`).
 
@@ -446,10 +446,10 @@ flowchart LR
 - Draw output tests include content validation through `test/verify_draw_pdb_contains_waters.cmake`, asserting that generated draw PDBs contain water atoms for the WCN sample configuration.
 
 ### CI notes and platform caveats
-- GitHub Actions matrix includes Linux/macOS/Windows with clang/gcc/msvc and Debug/Release variants (source: `.github/workflows/ci.yml`).
+- GitHub Actions matrix includes Linux/macOS variants (clang/gcc) with Debug/Release combinations; Windows/msvc entries are disabled (source: `.github/workflows/ci.yml`).
 - CodeQL workflow builds C++ target on Ubuntu (source: `.github/workflows/codeql-analysis.yml`).
 - Linux CI jobs install `libboost-dev`, and macOS CI jobs install Homebrew `boost`, before CMake configure so vendored CGAL's required `find_package(Boost 1.74)` succeeds on GitHub-hosted runners (source: `.github/workflows/ci.yml`, `.github/workflows/codeql-analysis.yml`, `external/cgal/Installation/cmake/modules/CGAL_SetupBoost.cmake`).
-- In `ci.yml`, tests/coverage execution and Codecov upload run on non-Windows runners only; Windows jobs now stop after configure/build/package steps (source: `.github/workflows/ci.yml`).
+- In `ci.yml`, tests/coverage execution and Codecov upload run on non-Windows runners (`runner.os != 'Windows'` guards remain) (source: `.github/workflows/ci.yml`).
 - Sanitizers and static analyzers are enabled by default in top-level non-maintainer builds unless explicitly disabled (source: `ProjectOptions.cmake`, `cmake/Sanitizers.cmake`).
 - CPM bootstrap performs network download unless cached/offline-provided (source: `cmake/CPM.cmake`).
 

@@ -8,18 +8,17 @@
 
 namespace watpocket::detail {
 
-struct HullData {
+struct HullData
+{
   HullGeometry geometry;
   std::vector<std::array<double, 4>> halfspaces;
 };
 
 [[nodiscard]] HullData compute_hull_data(PointSoAView points);
 
-[[nodiscard]] bool point_inside_or_on_hull(double x,
-                                           double y,
-                                           double z,
-                                           const std::vector<std::array<double, 4>>& halfspaces) noexcept;
+[[nodiscard]] bool
+  point_inside_or_on_hull(double x, double y, double z, const std::vector<std::array<double, 4>> &halfspaces) noexcept;
 
-} // namespace watpocket::detail
+}// namespace watpocket::detail
 
 #endif
