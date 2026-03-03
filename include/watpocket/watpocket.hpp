@@ -292,6 +292,7 @@ struct TrajectorySummary
 };
 
 [[nodiscard]] WATPOCKET_LIB_EXPORT std::string_view build_version() noexcept;
+[[nodiscard]] WATPOCKET_LIB_EXPORT std::string_view build_git_sha() noexcept;
 
 // Parse `--resnums` style selectors: "12,15" or "A:12,B:18".
 // Throws watpocket::Error on invalid input.

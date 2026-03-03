@@ -161,3 +161,40 @@ If you compiled with python bindings, install them in your current python enviro
 cmake --install ./build --component pythoninstall
 python -c "import watpocket; print(watpocket.__file__)"
 ```
+
+### Release a New Version
+
+`watpocket` Python releases are wheel-only and versioned from the git tag at `HEAD`.
+
+1. Ensure your working tree is clean and choose the release version `X.Y.Z`.
+2. Create and push an annotated tag:
+
+```bash
+git tag -a X.Y.Z -m "Release X.Y.Z"
+git push origin X.Y.Z
+```
+
+3. Build wheels only (no upload):
+
+```bash
+scripts/pypi_release_wheels.sh --build-only
+```
+
+4. Upload to TestPyPI (recommended first):
+
+```bash
+export TWINE_PASSWORD="<testpypi-token>"
+scripts/pypi_release_wheels.sh --testpypi
+```
+
+5. Upload to PyPI:
+
+```bash
+export TWINE_PASSWORD="<pypi-token>"
+scripts/pypi_release_wheels.sh
+```
+
+Notes:
+- Accepted release tags are `X.Y.Z` no `vX.Y.Z`
+- The script uploads `dist/watpocket-<version>-*.whl` only (no source distribution).
+- Default Twine username is `__token__`; override with `TWINE_USERNAME` if needed.

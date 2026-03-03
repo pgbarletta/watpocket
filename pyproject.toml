@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "watpocket"
-version = "0.0.2"
+dynamic = ["version"]
 description = "Python bindings for watpocket"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,3 +27,7 @@ myproject_ENABLE_SANITIZER_ADDRESS = "OFF"
 myproject_ENABLE_SANITIZER_UNDEFINED = "OFF"
 myproject_ENABLE_CLANG_TIDY = "OFF"
 myproject_ENABLE_CPPCHECK = "OFF"
+
+[tool.scikit-build.metadata.version]
+provider = "pypi_version_provider"
+provider-path = "scripts"

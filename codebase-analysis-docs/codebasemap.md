@@ -45,6 +45,7 @@
 ├── configured_files/          # template for generated config header
 ├── include/watpocket/         # public watpocket library headers (installable API)
 ├── plans/                     # implementation/refactor plans (Markdown)
+├── scripts/                   # release automation + dynamic version provider for wheel builds
 ├── src/
 │   ├── watpocket_lib/         # watpocket library target (implementation)
 │   ├── watpocket/             # production CLI binary
@@ -86,7 +87,9 @@
   - `--version` (source: `src/watpocket/main.cpp:main`).
 - CMake options: sanitizers, static analyzers, ccache, coverage, IPO, hardening via `ProjectOptions.cmake` (source: `ProjectOptions.cmake`).
 - CMake option `WATPOCKET_ENABLE_PYTHON_BINDINGS` gates nanobind extension build in non-scikit workflows; scikit-build (`SKBUILD`) forces it on for wheel builds (source: `CMakeLists.txt`, `src/CMakeLists.txt`).
-- Python packaging surface is defined in `pyproject.toml` using `scikit-build-core` with build targets `watpocket`, `watpocket_ext`, and `watpocket_stub` (output module name `watpocket` plus generated `watpocket.pyi`, while keeping install rules satisfied); the extension installs with `RPATH=$ORIGIN/lib` so bundled `libwatpocket.so` resolves at import time, and editable/wheel builds default to `Release` with `clang-tidy`, `cppcheck`, and ASan/UBSan disabled via CMake defines for faster package builds (source: `pyproject.toml`, `src/python/CMakeLists.txt`, `ProjectOptions.cmake`).
+- Python packaging surface is defined in `pyproject.toml` using `scikit-build-core` with build targets `watpocket`, `watpocket_ext`, and `watpocket_stub` (output module name `watpocket` plus generated `watpocket.pyi`, while keeping install rules satisfied); Python package version is dynamic and comes from an exact git tag (`vX.Y.Z`/`X.Y.Z`) via `scripts/pypi_version_provider.py`; the extension installs with `RPATH=$ORIGIN/lib` so bundled `libwatpocket.so` resolves at import time, and editable/wheel builds default to `Release` with `clang-tidy`, `cppcheck`, and ASan/UBSan disabled via CMake defines for faster package builds (source: `pyproject.toml`, `scripts/pypi_version_provider.py`, `src/python/CMakeLists.txt`, `ProjectOptions.cmake`).
+- Release helper `scripts/pypi_release_wheels.sh` enforces clean-tree, exact-tag releases, builds wheel artifacts only, and uploads wheel files only (no source distributions) with CMake overrides `WATPOCKET_VERSION` + `GIT_SHA` set from git metadata (source: `scripts/pypi_release_wheels.sh`).
+- `README.md` Development section includes a release runbook for wheel-only publishing (build-only, TestPyPI, and PyPI steps) using `scripts/pypi_release_wheels.sh` and tag-driven versioning (source: `README.md`, `scripts/pypi_release_wheels.sh`).
 - Nanobind bindings in `src/python/bindings.cpp` mirror the current public trajectory API directly (`analyze_trajectory_files(..., num_threads=1)` without callback parameters) and expose `TrajectorySummary` skip metadata (`has_skipped_frames`, `skipped_frame_warnings`) to Python.
 - When Python bindings are enabled, `src/python/CMakeLists.txt` adds an `ALL` aggregate target (`watpocket_python_bindings`) so regular default builds include both `watpocket_ext` and `watpocket_stub`.
 - Install behavior is split by build context in `src/python/CMakeLists.txt`: under `SKBUILD`, extension + stub install to package-root destinations used by wheel/editable packaging; under native CMake (non-`SKBUILD`), installs are exposed only through the `pythoninstall` component, which writes `watpocket_ext` + `watpocket.pyi` into the selected interpreter `platlib` path, installs `libwatpocket.so*` into `platlib/lib` (matching module `RPATH=$ORIGIN/lib`), and fails fast if `watpocket` is already installed in that interpreter (users must uninstall first).
@@ -479,7 +482,7 @@ flowchart LR
   - Disable sanitizers/analyzers/cache similar to `comp.sh`.
   - Build target `watpocket` only.
 - To validate packaging/version metadata path:
-  - Run `watpocket --version` (value comes from generated configured header) (source: `configured_files/config.hpp.in`, `src/watpocket/main.cpp:main`).
+  - Run `watpocket --version` (prints project version and short git SHA when available; values come from generated configured header) (source: `configured_files/config.hpp.in`, `src/watpocket/main.cpp:main`).
 - For geometry correctness debugging:
   - Use `-d/--draw` to emit script (`.py`, single-structure) or model PDB (`.pdb`, including trajectory mode) for viewer inspection (source: `src/watpocket/main.cpp:main`, `src/watpocket_lib/watpocket.cpp:write_pymol_draw_script`, `write_hull_pdb`, `write_hull_pdb_model`).
 
@@ -520,7 +523,7 @@ flowchart LR
 - `main` → `src/watpocket/main.cpp`: CLI orchestration and execution spine.
 - Public API surface (`watpocket::Error`, `PointSoA`/views, `ResidueSelector`, results, trajectory summaries with warning map, exported point readers) → `include/watpocket/watpocket.hpp`.
 - Public API implementation:
-  - `watpocket::build_version` / `parse_residue_selectors` / `read_structure_points_by_atom_indices` / `read_trajectory_points_by_atom_indices` / `analyze_structure_file` / `analyze_trajectory_files` / `write_pymol_draw_script` / `write_hull_pdb` → `src/watpocket_lib/watpocket.cpp`.
+  - `watpocket::build_version` / `watpocket::build_git_sha` / `parse_residue_selectors` / `read_structure_points_by_atom_indices` / `read_trajectory_points_by_atom_indices` / `analyze_structure_file` / `analyze_trajectory_files` / `write_pymol_draw_script` / `write_hull_pdb` → `src/watpocket_lib/watpocket.cpp`.
 - Internal library helpers:
   - `parse_parm7_sections` / `parse_parm7_topology` → `src/watpocket_lib/watpocket.cpp`.
   - `residue_chain_id` / `build_residue_lookup` → `src/watpocket_lib/watpocket.cpp`.
@@ -572,6 +575,8 @@ flowchart LR
 - `test/data/wcn/1.nc.csv`
 - `src/python/CMakeLists.txt`
 - `src/python/bindings.cpp`
+- `scripts/pypi_release_wheels.sh`
+- `scripts/pypi_version_provider.py`
 - `test/python/integration_wcn_0nc_threads.py`
 - `test/python/integration_wcn_1nc.py`
 - `test/integration/wcn/run.sh`

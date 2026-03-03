@@ -50,6 +50,17 @@ bool is_drawable_structure_path(const std::filesystem::path &path)
   return ext == ".pdb" || ext == ".cif" || ext == ".mmcif";
 }
 
+std::string cli_version_text()
+{
+  const auto version = std::string(myproject::cmake::project_version);
+  if (myproject::cmake::git_sha == "Unknown" || myproject::cmake::git_sha.empty()) { return version; }
+
+  constexpr std::size_t short_sha_length = 8U;
+  const auto git_sha = std::string(myproject::cmake::git_sha);
+  const auto short_sha = git_sha.substr(0, std::min(short_sha_length, git_sha.size()));
+  return version + " (" + short_sha + ")";
+}
+
 std::string join_residue_ids(const std::vector<std::int64_t> &ids, const char sep)
 {
   std::ostringstream out;
@@ -127,7 +138,7 @@ int main(int argc, char **argv)
   std::string csv_output;
   std::size_t num_threads = 1;
 
-  app.set_version_flag("--version", std::string(myproject::cmake::project_version));
+  app.set_version_flag("--version", cli_version_text());
   app.add_option("inputs", inputs, "Input files: <structure> or <topology> <trajectory>")->required()->expected(1, 2);
   app.add_option("--resnums", resnums, "Comma-separated residue selectors, e.g. 12,15 or A:12,B:18")->required();
   app.add_option("-d,--draw",

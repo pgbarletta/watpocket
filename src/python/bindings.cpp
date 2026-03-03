@@ -111,6 +111,7 @@ NB_MODULE(watpocket, m)
     .def_rw("top_waters", &watpocket::TrajectorySummary::top_waters);
 
   m.def("build_version", []() { return std::string(watpocket::build_version()); });
+  m.def("build_git_sha", []() { return std::string(watpocket::build_git_sha()); });
   m.def("parse_residue_selectors",
     [](const std::string &csv) { return watpocket::parse_residue_selectors(csv); },
     "csv"_a);

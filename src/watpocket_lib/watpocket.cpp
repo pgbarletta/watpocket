@@ -1161,6 +1161,7 @@ namespace {
 }// namespace
 
 std::string_view build_version() noexcept { return myproject::cmake::project_version; }
+std::string_view build_git_sha() noexcept { return myproject::cmake::git_sha; }
 
 std::vector<ResidueSelector> parse_residue_selectors(std::string_view csv)
 {
