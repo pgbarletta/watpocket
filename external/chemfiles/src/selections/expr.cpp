@@ -398,6 +398,8 @@ const std::string& Resname::value(const Frame& frame, size_t i) const {
     }
 }
 
+Math::~Math() = default;
+
 bool Math::is_match(const Frame& frame, const Match& match) const {
     std::function<bool(double, double)> operation;
     switch (op_) {

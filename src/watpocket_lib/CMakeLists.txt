@@ -2,7 +2,7 @@ include(GenerateExportHeader)
 
 # Build watpocket as a shared library so consumers don't need to link internal
 # dependency targets (chemfiles/CGAL) themselves.
-add_library(watpocket_lib SHARED watpocket.cpp)
+add_library(watpocket_lib SHARED watpocket.cpp point_soa_cgal_adapter.cpp)
 add_library(watpocket::watpocket ALIAS watpocket_lib)
 
 target_link_libraries(watpocket_lib PRIVATE myproject_options myproject_warnings)

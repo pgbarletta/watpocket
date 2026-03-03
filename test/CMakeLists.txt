@@ -131,7 +131,9 @@ target_link_libraries(
   PRIVATE myproject::myproject_warnings
           myproject::myproject_options
           watpocket_lib
+          chemfiles
           Catch2::Catch2WithMain)
+target_compile_definitions(watpocket_api_tests PRIVATE WATPOCKET_SOURCE_ROOT="${WATPOCKET_SOURCE_ROOT}")
 
 myproject_configure_linker(watpocket_api_tests)
 

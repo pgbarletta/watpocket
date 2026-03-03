@@ -312,6 +312,7 @@ public:
     };
 
     Math(Operator op, MathAst lhs, MathAst rhs): op_(op), lhs_(std::move(lhs)), rhs_(std::move(rhs)) {}
+    ~Math() override;
 
     bool is_match(const Frame& frame, const Match& match) const override;
     void optimize() override;

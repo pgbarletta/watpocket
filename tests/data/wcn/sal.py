@@ -1,54 +1,56 @@
-from pymol import cmd, cgo
+from pymol import cmd
+from pymol.cgo import *
+from pymol import cgo
 
-cmd.load("0complex_wcn.pdb", "watpocket_input")
+cmd.load("1complex_wcn.pdb", "watpocket_input")
 
 hull_obj = [
     cgo.LINEWIDTH, 4.0,
     cgo.BEGIN, cgo.LINES,
     cgo.COLOR, 0.20, 0.80, 1.00,
-    cgo.VERTEX, 16.2010, 33.9270, 43.0710,
-    cgo.VERTEX, 22.1610, 31.3230, 51.5610,
-    cgo.VERTEX, 16.2010, 33.9270, 43.0710,
-    cgo.VERTEX, 24.1010, 32.9380, 54.5390,
-    cgo.VERTEX, 16.2010, 33.9270, 43.0710,
-    cgo.VERTEX, 31.3150, 48.0610, 43.7750,
-    cgo.VERTEX, 16.2010, 33.9270, 43.0710,
-    cgo.VERTEX, 33.9050, 31.9180, 42.7570,
-    cgo.VERTEX, 16.2010, 33.9270, 43.0710,
-    cgo.VERTEX, 34.1530, 43.8980, 33.9190,
-    cgo.VERTEX, 22.1610, 31.3230, 51.5610,
-    cgo.VERTEX, 24.1010, 32.9380, 54.5390,
-    cgo.VERTEX, 22.1610, 31.3230, 51.5610,
-    cgo.VERTEX, 33.9050, 31.9180, 42.7570,
-    cgo.VERTEX, 24.1010, 32.9380, 54.5390,
-    cgo.VERTEX, 31.3150, 48.0610, 43.7750,
-    cgo.VERTEX, 24.1010, 32.9380, 54.5390,
-    cgo.VERTEX, 33.9050, 31.9180, 42.7570,
-    cgo.VERTEX, 24.1010, 32.9380, 54.5390,
-    cgo.VERTEX, 34.3470, 43.3230, 44.8910,
-    cgo.VERTEX, 31.3150, 48.0610, 43.7750,
-    cgo.VERTEX, 34.1530, 43.8980, 33.9190,
-    cgo.VERTEX, 31.3150, 48.0610, 43.7750,
-    cgo.VERTEX, 34.3130, 45.4960, 40.2400,
-    cgo.VERTEX, 31.3150, 48.0610, 43.7750,
-    cgo.VERTEX, 34.3470, 43.3230, 44.8910,
-    cgo.VERTEX, 33.9050, 31.9180, 42.7570,
-    cgo.VERTEX, 34.1530, 43.8980, 33.9190,
-    cgo.VERTEX, 33.9050, 31.9180, 42.7570,
-    cgo.VERTEX, 34.3470, 43.3230, 44.8910,
-    cgo.VERTEX, 34.1530, 43.8980, 33.9190,
-    cgo.VERTEX, 34.3130, 45.4960, 40.2400,
-    cgo.VERTEX, 34.1530, 43.8980, 33.9190,
-    cgo.VERTEX, 34.3470, 43.3230, 44.8910,
-    cgo.VERTEX, 34.3130, 45.4960, 40.2400,
-    cgo.VERTEX, 34.3470, 43.3230, 44.8910,
+    cgo.VERTEX, 33.8490, 28.2430, 34.3960,
+    cgo.VERTEX, 34.9520, 39.2320, 35.4740,
+    cgo.VERTEX, 33.8490, 28.2430, 34.3960,
+    cgo.VERTEX, 34.8480, 41.0120, 30.6580,
+    cgo.VERTEX, 34.8480, 41.0120, 30.6580,
+    cgo.VERTEX, 34.9520, 39.2320, 35.4740,
+    cgo.VERTEX, 32.2480, 43.8800, 34.4830,
+    cgo.VERTEX, 32.9260, 38.8560, 24.9000,
+    cgo.VERTEX, 32.2480, 43.8800, 34.4830,
+    cgo.VERTEX, 34.8480, 41.0120, 30.6580,
+    cgo.VERTEX, 32.9260, 38.8560, 24.9000,
+    cgo.VERTEX, 34.8480, 41.0120, 30.6580,
+    cgo.VERTEX, 26.9740, 29.9240, 47.4960,
+    cgo.VERTEX, 32.2480, 43.8800, 34.4830,
+    cgo.VERTEX, 26.9740, 29.9240, 47.4960,
+    cgo.VERTEX, 34.9520, 39.2320, 35.4740,
+    cgo.VERTEX, 32.2480, 43.8800, 34.4830,
+    cgo.VERTEX, 34.9520, 39.2320, 35.4740,
+    cgo.VERTEX, 15.0590, 30.8490, 37.3100,
+    cgo.VERTEX, 32.2480, 43.8800, 34.4830,
+    cgo.VERTEX, 15.0590, 30.8490, 37.3100,
+    cgo.VERTEX, 32.9260, 38.8560, 24.9000,
+    cgo.VERTEX, 32.9260, 38.8560, 24.9000,
+    cgo.VERTEX, 33.8490, 28.2430, 34.3960,
+    cgo.VERTEX, 15.0590, 30.8490, 37.3100,
+    cgo.VERTEX, 33.8490, 28.2430, 34.3960,
+    cgo.VERTEX, 15.0590, 30.8490, 37.3100,
+    cgo.VERTEX, 26.9740, 29.9240, 47.4960,
+    cgo.VERTEX, 24.3760, 28.5710, 45.0820,
+    cgo.VERTEX, 33.8490, 28.2430, 34.3960,
+    cgo.VERTEX, 15.0590, 30.8490, 37.3100,
+    cgo.VERTEX, 24.3760, 28.5710, 45.0820,
+    cgo.VERTEX, 26.9740, 29.9240, 47.4960,
+    cgo.VERTEX, 33.8490, 28.2430, 34.3960,
+    cgo.VERTEX, 24.3760, 28.5710, 45.0820,
+    cgo.VERTEX, 26.9740, 29.9240, 47.4960,
     cgo.END,
 ]
 
 cmd.load_cgo(hull_obj, "watpocket_hull")
 cmd.set("cgo_line_width", 4.0, "watpocket_hull")
 cmd.show("cartoon", "watpocket_input")
-cmd.select("watpocket", "watpocket_input and solvent and resi 570")
+cmd.select("watpocket", "watpocket_input and solvent and resi 864+1348+1498+1499+1611+1738+1907+2706+3136+3173+4102+4513+4545+4843+4984+5835+5897+6312")
 cmd.hide("everything", "solvent")
 cmd.show("spheres", "watpocket")
 cmd.set("sphere_scale", 0.4, "watpocket")
