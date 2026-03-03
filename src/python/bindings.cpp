@@ -5,6 +5,7 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
 
 #include <filesystem>
@@ -90,11 +91,6 @@ NB_MODULE(watpocket, m)
     .def_rw("water_residue_ids", &watpocket::StructureAnalysisResult::water_residue_ids)
     .def_rw("water_atoms_for_pdb", &watpocket::StructureAnalysisResult::water_atoms_for_pdb);
 
-  nb::class_<watpocket::TrajectoryFrameResult>(m, "TrajectoryFrameResult")
-    .def(nb::init<>())
-    .def_rw("frame", &watpocket::TrajectoryFrameResult::frame)
-    .def_rw("water_residue_ids", &watpocket::TrajectoryFrameResult::water_residue_ids);
-
   nb::class_<watpocket::TrajectoryWaterPresence>(m, "TrajectoryWaterPresence")
     .def(nb::init<>())
     .def_rw("resid", &watpocket::TrajectoryWaterPresence::resid)
@@ -110,6 +106,8 @@ NB_MODULE(watpocket, m)
     .def_rw("max_waters", &watpocket::TrajectorySummary::max_waters)
     .def_rw("mean_waters", &watpocket::TrajectorySummary::mean_waters)
     .def_rw("median_waters", &watpocket::TrajectorySummary::median_waters)
+    .def_rw("has_skipped_frames", &watpocket::TrajectorySummary::has_skipped_frames)
+    .def_rw("skipped_frame_warnings", &watpocket::TrajectorySummary::skipped_frame_warnings)
     .def_rw("top_waters", &watpocket::TrajectorySummary::top_waters);
 
   m.def("build_version", []() { return std::string(watpocket::build_version()); });
@@ -153,19 +151,21 @@ NB_MODULE(watpocket, m)
       const std::string &trajectory_path,
       const std::vector<watpocket::ResidueSelector> &selectors,
       const std::optional<std::string> &csv_output,
-      const std::optional<std::string> &draw_output_pdb) {
+      const std::optional<std::string> &draw_output_pdb,
+      const std::size_t num_threads) {
       return watpocket::analyze_trajectory_files(std::filesystem::path(topology_path),
         std::filesystem::path(trajectory_path),
         selectors,
         optional_path_from_string(csv_output),
         optional_path_from_string(draw_output_pdb),
-        watpocket::TrajectoryCallbacks{});
+        num_threads);
     },
     "topology_path"_a,
     "trajectory_path"_a,
     "selectors"_a,
     "csv_output"_a = std::optional<std::string>{},
-    "draw_output_pdb"_a = std::optional<std::string>{});
+    "draw_output_pdb"_a = std::optional<std::string>{},
+    "num_threads"_a = 1U);
 
   m.def("write_pymol_draw_script",
     [](const std::string &input_path,

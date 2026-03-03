@@ -22,20 +22,23 @@ flowchart TD
   DRAW1 -->|.py| PY[Library: `write_pymol_draw_script(...)`]
   DRAW1 -->|.pdb| PDB[Library: `write_hull_pdb(...)`]
 
-  MODE -->|2| API2[Library: `watpocket::analyze_trajectory_files(topology, trajectory, ...)`]
+  MODE -->|2| API2[Library: `watpocket::analyze_trajectory_files(..., num_threads=1)`]
   API2 --> TOP{Topology backend}
   TOP -->|parm7/prmtop| P7[Parse parm7 topology]
   TOP -->|structure file| CF[Chemfiles: read topology frame]
   P7 --> CACHE[Cache CA indices + water refs]
   CF --> CACHE
   API2 --> SAN[Sanity check: traj has frames + atom-count matches]
-  SAN --> LOOP[Per-frame loop: read frame]
-  CACHE --> LOOP
-  LOOP --> FRAME[CA indices -> PointSoA -> hull -> water classification]
-  FRAME -->|ok| CSV[Write CSV row (if enabled)]
-  FRAME -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
-  FRAME -->|ok| CB[Callback: `on_frame` (if provided)]
-  FRAME -->|error| WARN[Callback: `on_warning`; skip frame]
-  LOOP --> STATS[Accumulate stats]
-  STATS --> RES2[`TrajectorySummary`]
-  RES2 --> OUT2[CLI prints stats + processed counts]
+  SAN --> DISPATCH{num_threads == 1?}
+  CACHE --> DISPATCH
+  DISPATCH -->|yes| LOOP[Serial per-frame loop: read + analyze]
+  DISPATCH -->|no| READQ[Main thread reads frames + queues tasks]
+  READQ --> WORK[Worker pool: hull + water classification]
+  LOOP --> COMMIT[Ordered commit by frame number]
+  WORK --> COMMIT
+  COMMIT -->|ok| CSV[Write CSV row (if enabled)]
+  COMMIT -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
+  COMMIT -->|error| WARN[Record warning text in `TrajectorySummary::skipped_frame_warnings`; skip frame]
+  COMMIT --> STATS[Accumulate stats]
+  STATS --> RES2[`TrajectorySummary`\n(with `has_skipped_frames` + warning map)]
+  RES2 --> OUT2[CLI prints warnings + stats + processed counts]

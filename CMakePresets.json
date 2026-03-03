@@ -233,21 +233,15 @@
         {
             "name": "release",
             "displayName": "release",
-            "description": "Build only the watpocket CLI target from the release configure preset",
+            "description": "Build default targets from the release configure preset (includes tests when BUILD_TESTING=ON)",
             "configurePreset": "release",
-            "targets": [
-                "watpocket"
-            ],
             "jobs": 12
         },
         {
             "name": "debug",
             "displayName": "debug",
-            "description": "Build only the watpocket CLI target from the release configure preset",
+            "description": "Build default targets from the debug configure preset (includes tests when BUILD_TESTING=ON)",
             "configurePreset": "debug",
-            "targets": [
-                "watpocket"
-            ],
             "jobs": 12
         }
     ],

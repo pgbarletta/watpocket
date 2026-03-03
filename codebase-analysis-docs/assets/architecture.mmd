@@ -13,8 +13,12 @@ flowchart LR
   MODE -->|2 inputs| TOP[Load topology\n(chemfiles or parm7 parser)]
   TOP --> CACHE[Cache CA/water atom indices]
   MODE -->|2 inputs| TRAJ[Read NetCDF trajectory frames]
-  TRAJ --> FRAME[Per-frame PointSoA hull + water classification]
-  CACHE --> FRAME
-  FRAME --> CSV[CSV rows to required `-o` file]
-  FRAME --> TDRAW[Optional trajectory draw PDB\n`--draw *.pdb` with MODEL blocks]
-  FRAME --> STATS[Trajectory stats to stdout\nmin/max/mean/median + top 5 waters]
+  TRAJ --> TMODE{`num_threads == 1`?}
+  CACHE --> TMODE
+  TMODE -->|yes| SFRAME[Serial per-frame hull + water classification]
+  TMODE -->|no| PFRAME[Worker-pool frame analysis]
+  SFRAME --> COMMIT[Ordered frame commit]
+  PFRAME --> COMMIT
+  COMMIT --> CSV[CSV rows to required `-o` file]
+  COMMIT --> TDRAW[Optional trajectory draw PDB\n`--draw *.pdb` with MODEL blocks]
+  COMMIT --> STATS[Trajectory stats to stdout\nmin/max/mean/median + top 5 waters]

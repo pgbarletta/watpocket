@@ -8,19 +8,28 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <future>
 #include <iomanip>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
+#include <queue>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -822,6 +831,333 @@ namespace {
     out << "ENDMDL\n";
   }
 
+  struct TrajectoryTopologyContext
+  {
+    bool topology_is_parm7 = false;
+    std::optional<Parm7Topology> parm7_topology;
+    std::size_t topology_atom_count = 0;
+    std::vector<std::size_t> ca_atom_indices;
+    std::vector<WaterOxygenRef> water_refs;
+  };
+
+  struct TrajectoryOutputStreams
+  {
+    std::ofstream csv_file;
+    std::ofstream draw_file;
+
+    [[nodiscard]] bool has_csv() const noexcept { return csv_file.is_open(); }
+    [[nodiscard]] bool has_draw() const noexcept { return draw_file.is_open(); }
+  };
+
+  struct TrajectoryFrameResult
+  {
+    std::size_t frame_number = 0;
+    std::vector<std::int64_t> water_residue_ids;
+    HullGeometry hull;
+    std::vector<PdbAtomRecord> water_atoms_for_pdb;
+    bool success = false;
+    std::string warning_message;
+  };
+
+  struct TrajectoryAccumulator
+  {
+    std::vector<std::size_t> waters_per_frame;
+    std::unordered_map<std::int64_t, std::size_t> water_presence_counts;
+    std::size_t successful_frames = 0;
+    std::size_t skipped_frames = 0;
+    std::unordered_map<std::size_t, std::string> skipped_frame_warnings;
+  };
+
+  class ThreadPool
+  {
+  public:
+    explicit ThreadPool(const std::size_t thread_count)
+    {
+      workers_.reserve(thread_count);
+      for (std::size_t i = 0; i < thread_count; ++i) {
+        workers_.emplace_back([this]() { worker_loop(); });
+      }
+    }
+
+    ~ThreadPool()
+    {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopping_ = true;
+      }
+      has_work_.notify_all();
+
+      for (auto &worker : workers_) {
+        if (worker.joinable()) { worker.join(); }
+      }
+    }
+
+    template<typename Fn>
+    auto submit(Fn &&fn) -> std::future<std::invoke_result_t<Fn>>
+    {
+      using Result = std::invoke_result_t<Fn>;
+
+      auto task = std::make_shared<std::packaged_task<Result()>>(std::forward<Fn>(fn));
+      auto future = task->get_future();
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_) { throw std::runtime_error("thread pool is stopped"); }
+        tasks_.push([task]() { (*task)(); });
+      }
+      has_work_.notify_one();
+      return future;
+    }
+
+  private:
+    void worker_loop()
+    {
+      while (true) {
+        std::function<void()> task;
+        {
+          std::unique_lock<std::mutex> lock(mutex_);
+          has_work_.wait(lock, [this]() { return stopping_ || !tasks_.empty(); });
+          if (stopping_ && tasks_.empty()) { return; }
+          task = std::move(tasks_.front());
+          tasks_.pop();
+        }
+        task();
+      }
+    }
+
+    std::vector<std::thread> workers_;
+    std::queue<std::function<void()>> tasks_;
+    std::mutex mutex_;
+    std::condition_variable has_work_;
+    bool stopping_ = false;
+  };
+
+  void validate_trajectory_analysis_inputs(const std::filesystem::path &topology_path,
+    const std::filesystem::path &trajectory_path,
+    const std::optional<std::filesystem::path> &draw_output_pdb,
+    const std::size_t num_threads)
+  {
+    if (!std::filesystem::exists(topology_path)) {
+      throw Error("topology file does not exist: '" + topology_path.string() + "'");
+    }
+
+    if (!std::filesystem::exists(trajectory_path)) {
+      throw Error("trajectory file does not exist: '" + trajectory_path.string() + "'");
+    }
+
+    if (!is_netcdf_trajectory_path(trajectory_path)) {
+      throw Error("trajectory mode currently supports NetCDF trajectories (.nc) only");
+    }
+
+    if (num_threads == 0U) { throw Error("num_threads must be >= 1"); }
+
+    if (draw_output_pdb && !is_pdb_draw_output_path(*draw_output_pdb)) {
+      throw Error("trajectory mode --draw output path must end with .pdb");
+    }
+  }
+
+  TrajectoryTopologyContext prepare_trajectory_topology_context(const std::filesystem::path &topology_path,
+    const std::vector<ResidueSelector> &selectors)
+  {
+    TrajectoryTopologyContext context;
+    context.topology_is_parm7 = is_parm7_topology_path(topology_path);
+
+    if (context.topology_is_parm7) {
+      context.parm7_topology = parse_parm7_topology(topology_path);
+      context.topology_atom_count = context.parm7_topology->atom_names.size();
+      context.ca_atom_indices = resolve_ca_atom_indices(*context.parm7_topology, selectors);
+      context.water_refs = collect_water_oxygen_refs(*context.parm7_topology);
+      return context;
+    }
+
+    chemfiles::Trajectory topology_trajectory(topology_path.string(), 'r');
+    const auto topology_frame = topology_trajectory.read();
+    context.topology_atom_count = topology_frame.size();
+    context.ca_atom_indices = resolve_ca_atom_indices(topology_frame, selectors);
+    context.water_refs = collect_water_oxygen_refs(topology_frame);
+    return context;
+  }
+
+  void validate_trajectory_sanity(const std::filesystem::path &trajectory_path,
+    const TrajectoryTopologyContext &context)
+  {
+    chemfiles::Trajectory sanity_trajectory(trajectory_path.string(), 'r');
+    if (sanity_trajectory.size() == 0U) {
+      throw Error("trajectory contains no frames: '" + trajectory_path.string() + "'");
+    }
+
+    const auto sanity_frame = sanity_trajectory.read();
+    if (sanity_frame.size() != context.topology_atom_count) {
+      throw Error("atom-count mismatch between topology and trajectory: topology has "
+                  + std::to_string(context.topology_atom_count) + " atoms, trajectory has "
+                  + std::to_string(sanity_frame.size()) + " atoms");
+    }
+  }
+
+  TrajectoryOutputStreams open_trajectory_output_streams(
+    const std::optional<std::filesystem::path> &csv_output, const std::optional<std::filesystem::path> &draw_output_pdb)
+  {
+    TrajectoryOutputStreams outputs;
+
+    if (csv_output) {
+      outputs.csv_file.open(*csv_output);
+      if (!outputs.csv_file) { throw Error("could not open output file '" + csv_output->string() + "'"); }
+      write_csv_header(outputs.csv_file);
+    }
+
+    if (draw_output_pdb) {
+      outputs.draw_file.open(*draw_output_pdb);
+      if (!outputs.draw_file) { throw Error("could not open draw output file '" + draw_output_pdb->string() + "'"); }
+      outputs.draw_file << "REMARK   Generated by watpocket --draw trajectory (.pdb MODEL output)\n";
+    }
+
+    return outputs;
+  }
+
+  TrajectoryFrameResult analyze_trajectory_frame(const chemfiles::Frame &frame,
+    const std::size_t frame_number,
+    const TrajectoryTopologyContext &context,
+    const bool include_draw_output)
+  {
+    TrajectoryFrameResult result;
+    result.frame_number = frame_number;
+
+    try {
+      if (frame.size() != context.topology_atom_count) {
+        throw std::runtime_error("atom-count mismatch: expected " + std::to_string(context.topology_atom_count)
+                                 + " atoms from topology but frame has " + std::to_string(frame.size()));
+      }
+
+      PointSoA ca_points_buffer;
+      fill_points_from_atom_indices(frame, context.ca_atom_indices, "selected C-alpha", ca_points_buffer);
+      const auto hull_data = detail::compute_hull_data(ca_points_buffer.view());
+      result.water_residue_ids = find_waters_inside_hull(frame, hull_data, context.water_refs);
+
+      if (include_draw_output) {
+        result.hull = hull_data.geometry;
+        if (context.topology_is_parm7) {
+          result.water_atoms_for_pdb = collect_water_atoms_for_pdb(frame, *context.parm7_topology, result.water_residue_ids);
+        } else {
+          result.water_atoms_for_pdb = collect_water_atoms_for_pdb(frame, result.water_residue_ids);
+        }
+      }
+
+      result.success = true;
+      return result;
+    } catch (const std::exception &e) {
+      result.success = false;
+      result.warning_message = "Warning: skipping frame " + std::to_string(frame_number) + ": " + e.what();
+      return result;
+    }
+  }
+
+  void commit_frame_result(
+    const TrajectoryFrameResult &result, TrajectoryOutputStreams &outputs, TrajectoryAccumulator &accumulator)
+  {
+    if (!result.success) {
+      ++accumulator.skipped_frames;
+      accumulator.skipped_frame_warnings[result.frame_number] = result.warning_message;
+      return;
+    }
+
+    if (outputs.has_csv()) { write_csv_row(outputs.csv_file, result.frame_number, result.water_residue_ids); }
+    if (outputs.has_draw()) {
+      write_hull_pdb_model(outputs.draw_file, result.hull, result.frame_number, result.water_atoms_for_pdb);
+    }
+
+    accumulator.waters_per_frame.push_back(result.water_residue_ids.size());
+    for (const auto resid : result.water_residue_ids) { ++accumulator.water_presence_counts[resid]; }
+    ++accumulator.successful_frames;
+  }
+
+  TrajectorySummary finalize_trajectory_summary(const std::size_t frame_count, const TrajectoryAccumulator &accumulator)
+  {
+    if (accumulator.successful_frames == 0U) {
+      throw Error("all trajectory frames failed analysis (" + std::to_string(frame_count) + " frames skipped)");
+    }
+
+    TrajectorySummary summary = summarize_trajectory(accumulator.waters_per_frame, accumulator.water_presence_counts);
+    summary.frames_processed = frame_count;
+    summary.frames_successful = accumulator.successful_frames;
+    summary.frames_skipped = accumulator.skipped_frames;
+    summary.has_skipped_frames = !accumulator.skipped_frame_warnings.empty();
+    summary.skipped_frame_warnings = accumulator.skipped_frame_warnings;
+    return summary;
+  }
+
+  TrajectorySummary analyze_trajectory_serial(chemfiles::Trajectory &trajectory,
+    const TrajectoryTopologyContext &context,
+    TrajectoryOutputStreams &outputs)
+  {
+    TrajectoryAccumulator accumulator;
+    std::size_t frame_number = 0;
+
+    while (!trajectory.done()) {
+      const auto current_frame_number = frame_number + 1U;
+      chemfiles::Frame frame;
+      try {
+        frame = trajectory.read();
+      } catch (const std::exception &e) {
+        throw Error("frame " + std::to_string(current_frame_number) + ": " + e.what());
+      }
+      frame_number = current_frame_number;
+
+      const auto result = analyze_trajectory_frame(frame, current_frame_number, context, outputs.has_draw());
+      commit_frame_result(result, outputs, accumulator);
+    }
+
+    if (outputs.has_draw()) { outputs.draw_file << "END\n"; }
+    return finalize_trajectory_summary(frame_number, accumulator);
+  }
+
+  TrajectorySummary analyze_trajectory_parallel(chemfiles::Trajectory &trajectory,
+    const TrajectoryTopologyContext &context,
+    TrajectoryOutputStreams &outputs,
+    const std::size_t num_threads)
+  {
+    struct PendingFrameTask
+    {
+      std::size_t frame_number = 0;
+      std::future<TrajectoryFrameResult> future;
+    };
+
+    ThreadPool pool(num_threads);
+    std::deque<PendingFrameTask> pending;
+    TrajectoryAccumulator accumulator;
+    std::size_t frame_number = 0;
+
+    auto flush_oldest = [&]() {
+      auto oldest = std::move(pending.front());
+      pending.pop_front();
+      const auto result = oldest.future.get();
+      commit_frame_result(result, outputs, accumulator);
+    };
+
+    while (!trajectory.done()) {
+      const auto current_frame_number = frame_number + 1U;
+      chemfiles::Frame frame;
+      try {
+        frame = trajectory.read();
+      } catch (const std::exception &e) {
+        throw Error("frame " + std::to_string(current_frame_number) + ": " + e.what());
+      }
+      frame_number = current_frame_number;
+
+      const auto include_draw_output = outputs.has_draw();
+      pending.push_back(PendingFrameTask{
+        current_frame_number,
+        pool.submit([frame = std::move(frame), current_frame_number, &context, include_draw_output]() mutable {
+          return analyze_trajectory_frame(frame, current_frame_number, context, include_draw_output);
+        }) });
+
+      if (pending.size() >= num_threads) { flush_oldest(); }
+    }
+
+    while (!pending.empty()) { flush_oldest(); }
+
+    if (outputs.has_draw()) { outputs.draw_file << "END\n"; }
+    return finalize_trajectory_summary(frame_number, accumulator);
+  }
+
 }// namespace
 
 std::string_view build_version() noexcept { return myproject::cmake::project_version; }
@@ -970,137 +1306,19 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path &topology
   const std::vector<ResidueSelector> &selectors,
   const std::optional<std::filesystem::path> &csv_output,
   const std::optional<std::filesystem::path> &draw_output_pdb,
-  const TrajectoryCallbacks &callbacks)
+  const std::size_t num_threads)
 {
   try {
-    if (!std::filesystem::exists(topology_path)) {
-      throw Error("topology file does not exist: '" + topology_path.string() + "'");
-    }
-
-    if (!std::filesystem::exists(trajectory_path)) {
-      throw Error("trajectory file does not exist: '" + trajectory_path.string() + "'");
-    }
-
-    if (!is_netcdf_trajectory_path(trajectory_path)) {
-      throw Error("trajectory mode currently supports NetCDF trajectories (.nc) only");
-    }
-
-    const auto topology_is_parm7 = is_parm7_topology_path(topology_path);
-    std::optional<Parm7Topology> parm7_topology;
-    std::size_t topology_atom_count = 0;
-    std::vector<std::size_t> ca_atom_indices;
-    std::vector<WaterOxygenRef> water_refs;
-
-    if (topology_is_parm7) {
-      parm7_topology = parse_parm7_topology(topology_path);
-      topology_atom_count = parm7_topology->atom_names.size();
-      ca_atom_indices = resolve_ca_atom_indices(*parm7_topology, selectors);
-      water_refs = collect_water_oxygen_refs(*parm7_topology);
-    } else {
-      chemfiles::Trajectory topology_trajectory(topology_path.string(), 'r');
-      const auto topology_frame = topology_trajectory.read();
-      topology_atom_count = topology_frame.size();
-      ca_atom_indices = resolve_ca_atom_indices(topology_frame, selectors);
-      water_refs = collect_water_oxygen_refs(topology_frame);
-    }
-
-    chemfiles::Trajectory sanity_trajectory(trajectory_path.string(), 'r');
-    if (sanity_trajectory.size() == 0U) {
-      throw Error("trajectory contains no frames: '" + trajectory_path.string() + "'");
-    }
-
-    const auto sanity_frame = sanity_trajectory.read();
-    if (sanity_frame.size() != topology_atom_count) {
-      throw Error("atom-count mismatch between topology and trajectory: topology has "
-                  + std::to_string(topology_atom_count) + " atoms, trajectory has "
-                  + std::to_string(sanity_frame.size()) + " atoms");
-    }
+    validate_trajectory_analysis_inputs(topology_path, trajectory_path, draw_output_pdb, num_threads);
+    const auto context = prepare_trajectory_topology_context(topology_path, selectors);
+    validate_trajectory_sanity(trajectory_path, context);
 
     chemfiles::Trajectory trajectory(trajectory_path.string(), 'r');
-    if (!topology_is_parm7) { trajectory.set_topology(topology_path.string()); }
+    if (!context.topology_is_parm7) { trajectory.set_topology(topology_path.string()); }
 
-    std::ofstream csv_file;
-    if (csv_output) {
-      csv_file.open(*csv_output);
-      if (!csv_file) { throw Error("could not open output file '" + csv_output->string() + "'"); }
-      write_csv_header(csv_file);
-    }
-
-    std::ofstream draw_file;
-    if (draw_output_pdb) {
-      if (!is_pdb_draw_output_path(*draw_output_pdb)) {
-        throw Error("trajectory mode --draw output path must end with .pdb");
-      }
-
-      draw_file.open(*draw_output_pdb);
-      if (!draw_file) { throw Error("could not open draw output file '" + draw_output_pdb->string() + "'"); }
-      draw_file << "REMARK   Generated by watpocket --draw trajectory (.pdb MODEL output)\n";
-    }
-
-    std::vector<std::size_t> waters_per_frame;
-    std::unordered_map<std::int64_t, std::size_t> water_presence_counts;
-    PointSoA ca_points_buffer;
-
-    std::size_t frame_number = 0;
-    std::size_t successful_frames = 0;
-    std::size_t skipped_frames = 0;
-
-    while (!trajectory.done()) {
-      const auto current_frame_number = frame_number + 1U;
-      chemfiles::Frame frame;
-      try {
-        frame = trajectory.read();
-      } catch (const std::exception &e) {
-        throw Error("frame " + std::to_string(current_frame_number) + ": " + e.what());
-      }
-      frame_number = current_frame_number;
-
-      try {
-        if (frame.size() != topology_atom_count) {
-          throw std::runtime_error("atom-count mismatch: expected " + std::to_string(topology_atom_count)
-                                   + " atoms from topology but frame has " + std::to_string(frame.size()));
-        }
-
-        fill_points_from_atom_indices(frame, ca_atom_indices, "selected C-alpha", ca_points_buffer);
-        const auto hull_data = detail::compute_hull_data(ca_points_buffer.view());
-        const auto water_residue_ids = find_waters_inside_hull(frame, hull_data, water_refs);
-
-        if (csv_output) { write_csv_row(csv_file, current_frame_number, water_residue_ids); }
-
-        if (draw_output_pdb) {
-          std::vector<PdbAtomRecord> water_atoms;
-          if (topology_is_parm7) {
-            water_atoms = collect_water_atoms_for_pdb(frame, *parm7_topology, water_residue_ids);
-          } else {
-            water_atoms = collect_water_atoms_for_pdb(frame, water_residue_ids);
-          }
-          write_hull_pdb_model(draw_file, hull_data.geometry, current_frame_number, water_atoms);
-        }
-
-        if (callbacks.on_frame) {
-          callbacks.on_frame(callbacks.user_data, TrajectoryFrameResult{ current_frame_number, water_residue_ids });
-        }
-
-        waters_per_frame.push_back(water_residue_ids.size());
-        for (const auto resid : water_residue_ids) { ++water_presence_counts[resid]; }
-        ++successful_frames;
-      } catch (const std::exception &e) {
-        ++skipped_frames;
-        if (callbacks.on_warning) {
-          callbacks.on_warning(
-            callbacks.user_data, "Warning: skipping frame " + std::to_string(current_frame_number) + ": " + e.what());
-        }
-      }
-    }
-
-    if (draw_output_pdb) { draw_file << "END\n"; }
-
-    TrajectorySummary summary = summarize_trajectory(waters_per_frame, water_presence_counts);
-    summary.frames_processed = frame_number;
-    summary.frames_successful = successful_frames;
-    summary.frames_skipped = skipped_frames;
-
-    return summary;
+    auto outputs = open_trajectory_output_streams(csv_output, draw_output_pdb);
+    if (num_threads == 1U) { return analyze_trajectory_serial(trajectory, context, outputs); }
+    return analyze_trajectory_parallel(trajectory, context, outputs, num_threads);
   } catch (const Error &) {
     throw;
   } catch (const std::exception &e) {

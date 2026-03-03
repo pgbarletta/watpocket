@@ -9,6 +9,9 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,10 +35,23 @@ fs::path unique_temp_nc_path(const std::string& stem)
   return fs::temp_directory_path() / ("watpocket-" + stem + "-" + std::to_string(ticks) + ".nc");
 }
 
+fs::path unique_temp_csv_path(const std::string& stem)
+{
+  const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+  return fs::temp_directory_path() / ("watpocket-" + stem + "-" + std::to_string(ticks) + ".csv");
+}
+
 struct TempFileGuard {
   fs::path path;
   ~TempFileGuard() { std::error_code ec; fs::remove(path, ec); }
 };
+
+std::string read_text_file(const fs::path& path)
+{
+  std::ifstream in(path);
+  if (!in) { throw std::runtime_error("failed to open file: " + path.string()); }
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
 
 void write_netcdf_from_pdb_frames(const fs::path& output_nc_path, const std::vector<fs::path>& frame_paths)
 {
@@ -59,6 +75,49 @@ void write_netcdf_with_atom_count(const fs::path& output_nc_path, const std::siz
   }
 
   writer.write(frame);
+}
+
+std::vector<std::size_t> find_ca_atom_indices_for_residue_ids(const chemfiles::Frame& frame,
+                                                               const std::vector<std::int64_t>& residue_ids)
+{
+  const auto& topology = frame.topology();
+  const auto& residues = topology.residues();
+
+  std::vector<std::size_t> ca_atom_indices;
+  ca_atom_indices.reserve(residue_ids.size());
+
+  for (const auto residue_id : residue_ids) {
+    std::size_t matched_residue_index = 0;
+    std::size_t residue_match_count = 0;
+    for (std::size_t residue_index = 0; residue_index < residues.size(); ++residue_index) {
+      if (!residues[residue_index].id() || *residues[residue_index].id() != residue_id) { continue; }
+      matched_residue_index = residue_index;
+      ++residue_match_count;
+    }
+
+    if (residue_match_count != 1U) {
+      throw std::runtime_error(
+        "expected exactly one residue match for id " + std::to_string(residue_id) + ", got " + std::to_string(residue_match_count));
+    }
+
+    const auto& residue = topology.residue(matched_residue_index);
+    std::size_t ca_index = 0;
+    std::size_t ca_count = 0;
+    for (const auto atom_index : residue) {
+      if (frame[atom_index].name() != "CA") { continue; }
+      ca_index = atom_index;
+      ++ca_count;
+    }
+
+    if (ca_count != 1U) {
+      throw std::runtime_error(
+        "expected exactly one CA atom for residue id " + std::to_string(residue_id) + ", got " + std::to_string(ca_count));
+    }
+
+    ca_atom_indices.push_back(ca_index);
+  }
+
+  return ca_atom_indices;
 }
 
 void require_coordinates_match(const watpocket::PointSoA& points,
@@ -350,5 +409,125 @@ TEST_CASE("read_trajectory_points_by_atom_indices reports topology-trajectory at
     FAIL("Expected watpocket::Error");
   } catch (const watpocket::Error& e) {
     REQUIRE_THAT(e.what(), ContainsSubstring("atom-count mismatch between topology and trajectory"));
+  }
+}
+
+TEST_CASE("analyze_trajectory_files records skipped-frame warnings in summary", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  REQUIRE(fs::exists(topology_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55");
+  chemfiles::Trajectory topology_reader(topology_path.string(), 'r');
+  const auto good_frame = topology_reader.read();
+  chemfiles::Trajectory topology_reader_for_bad(topology_path.string(), 'r');
+  auto bad_frame = topology_reader_for_bad.read();
+
+  const auto ca_indices = find_ca_atom_indices_for_residue_ids(good_frame, { 164, 128, 160, 55 });
+  REQUIRE(ca_indices.size() == 4U);
+
+  auto positions = bad_frame.positions();
+  for (std::size_t i = 0; i < ca_indices.size(); ++i) {
+    positions[ca_indices[i]] = { static_cast<double>(i), 0.0, 0.0 };
+  }
+
+  const auto trajectory_path = unique_temp_nc_path("api-analyze-skipped");
+  TempFileGuard cleanup{ trajectory_path };
+  {
+    chemfiles::Trajectory writer(trajectory_path.string(), 'w');
+    writer.write(good_frame);
+    writer.write(bad_frame);
+  }
+
+  const auto summary =
+    watpocket::analyze_trajectory_files(topology_path, trajectory_path, selectors, std::nullopt, std::nullopt);
+
+  REQUIRE(summary.frames_processed == 2U);
+  REQUIRE(summary.frames_successful == 1U);
+  REQUIRE(summary.frames_skipped == 1U);
+  REQUIRE(summary.has_skipped_frames);
+  REQUIRE(summary.skipped_frame_warnings.size() == 1U);
+  REQUIRE(summary.skipped_frame_warnings.contains(2U));
+  REQUIRE_THAT(summary.skipped_frame_warnings.at(2U), ContainsSubstring("Warning: skipping frame 2:"));
+}
+
+TEST_CASE("analyze_trajectory_files throws when all frames fail analysis", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/0complex_wcn.pdb");
+  REQUIRE(fs::exists(topology_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55");
+  chemfiles::Trajectory topology_reader(topology_path.string(), 'r');
+  auto bad_frame = topology_reader.read();
+
+  const auto ca_indices = find_ca_atom_indices_for_residue_ids(bad_frame, { 164, 128, 160, 55 });
+  REQUIRE(ca_indices.size() == 4U);
+
+  auto positions = bad_frame.positions();
+  for (std::size_t i = 0; i < ca_indices.size(); ++i) {
+    positions[ca_indices[i]] = { static_cast<double>(i), 0.0, 0.0 };
+  }
+
+  const auto trajectory_path = unique_temp_nc_path("api-analyze-all-fail");
+  TempFileGuard cleanup{ trajectory_path };
+  {
+    chemfiles::Trajectory writer(trajectory_path.string(), 'w');
+    writer.write(bad_frame);
+  }
+
+  try {
+    (void)watpocket::analyze_trajectory_files(topology_path, trajectory_path, selectors, std::nullopt, std::nullopt);
+    FAIL("Expected watpocket::Error");
+  } catch (const watpocket::Error& e) {
+    REQUIRE_THAT(e.what(), ContainsSubstring("all trajectory frames failed analysis"));
+  }
+}
+
+TEST_CASE("analyze_trajectory_files validates num_threads >= 1", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
+  const auto trajectory_path = fixture_path("test/data/wcn/1.nc");
+  REQUIRE(fs::exists(topology_path));
+  REQUIRE(fs::exists(trajectory_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55");
+  REQUIRE_THROWS_AS(
+    watpocket::analyze_trajectory_files(topology_path, trajectory_path, selectors, std::nullopt, std::nullopt, 0U),
+    watpocket::Error);
+}
+
+TEST_CASE("analyze_trajectory_files parallel output matches serial output", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
+  const auto trajectory_path = fixture_path("test/data/wcn/1.nc");
+  REQUIRE(fs::exists(topology_path));
+  REQUIRE(fs::exists(trajectory_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55,167,61,42,65,66");
+  const auto serial_csv_path = unique_temp_csv_path("api-serial");
+  const auto parallel_csv_path = unique_temp_csv_path("api-parallel");
+  TempFileGuard serial_csv_cleanup{ serial_csv_path };
+  TempFileGuard parallel_csv_cleanup{ parallel_csv_path };
+
+  const auto serial_summary = watpocket::analyze_trajectory_files(
+    topology_path, trajectory_path, selectors, serial_csv_path, std::nullopt, 1U);
+  const auto parallel_summary = watpocket::analyze_trajectory_files(
+    topology_path, trajectory_path, selectors, parallel_csv_path, std::nullopt, 2U);
+
+  REQUIRE(read_text_file(serial_csv_path) == read_text_file(parallel_csv_path));
+  REQUIRE(parallel_summary.frames_processed == serial_summary.frames_processed);
+  REQUIRE(parallel_summary.frames_successful == serial_summary.frames_successful);
+  REQUIRE(parallel_summary.frames_skipped == serial_summary.frames_skipped);
+  REQUIRE(parallel_summary.min_waters == serial_summary.min_waters);
+  REQUIRE(parallel_summary.max_waters == serial_summary.max_waters);
+  REQUIRE(parallel_summary.mean_waters == Catch::Approx(serial_summary.mean_waters));
+  REQUIRE(parallel_summary.median_waters == Catch::Approx(serial_summary.median_waters));
+  REQUIRE(parallel_summary.has_skipped_frames == serial_summary.has_skipped_frames);
+  REQUIRE(parallel_summary.skipped_frame_warnings == serial_summary.skipped_frame_warnings);
+  REQUIRE(parallel_summary.top_waters.size() == serial_summary.top_waters.size());
+  for (std::size_t i = 0; i < parallel_summary.top_waters.size(); ++i) {
+    REQUIRE(parallel_summary.top_waters[i].resid == serial_summary.top_waters[i].resid);
+    REQUIRE(parallel_summary.top_waters[i].frames_present == serial_summary.top_waters[i].frames_present);
+    REQUIRE(parallel_summary.top_waters[i].fraction == Catch::Approx(serial_summary.top_waters[i].fraction));
   }
 }

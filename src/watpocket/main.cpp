@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -99,10 +100,19 @@ void write_trajectory_statistics(std::ostream &out, const watpocket::TrajectoryS
   }
 }
 
-void on_trajectory_warning(void *user_data, std::string_view message)
+void write_trajectory_warnings(std::ostream &out, const watpocket::TrajectorySummary &summary)
 {
-  auto &out = *static_cast<std::ostream *>(user_data);
-  out << message << '\n';
+  if (!summary.has_skipped_frames || summary.skipped_frame_warnings.empty()) { return; }
+
+  std::vector<std::pair<std::size_t, std::string>> ordered_warnings;
+  ordered_warnings.reserve(summary.skipped_frame_warnings.size());
+  for (const auto &entry : summary.skipped_frame_warnings) { ordered_warnings.push_back(entry); }
+
+  std::sort(ordered_warnings.begin(), ordered_warnings.end(), [](const auto &lhs, const auto &rhs) {
+    return lhs.first < rhs.first;
+  });
+
+  for (const auto &entry : ordered_warnings) { out << entry.second << '\n'; }
 }
 
 }// namespace
@@ -115,6 +125,7 @@ int main(int argc, char **argv)
   std::string resnums;
   std::string draw_output;
   std::string csv_output;
+  std::size_t num_threads = 1;
 
   app.set_version_flag("--version", std::string(myproject::cmake::project_version));
   app.add_option("inputs", inputs, "Input files: <structure> or <topology> <trajectory>")->required()->expected(1, 2);
@@ -124,6 +135,8 @@ int main(int argc, char **argv)
     "Write draw output. Single-structure mode: .py (PyMOL script) or .pdb (hull PDB). "
     "Trajectory mode: .pdb only (hull per frame using MODEL/ENDMDL).");
   app.add_option("-o,--output", csv_output, "Write trajectory CSV output to this path (required in trajectory mode).");
+  app.add_option(
+    "--threads", num_threads, "Trajectory worker threads for frame analysis (default: 1; 1 disables parallelism).");
 
   try {
     app.parse(argc, argv);
@@ -160,16 +173,14 @@ int main(int argc, char **argv)
         throw watpocket::Error("trajectory mode --draw output path must end with .pdb");
       }
 
-      watpocket::TrajectoryCallbacks callbacks;
-      callbacks.user_data = &std::cerr;
-      callbacks.on_warning = &on_trajectory_warning;
-
       const auto summary = watpocket::analyze_trajectory_files(topology_path,
         trajectory_path,
         selectors,
         std::filesystem::path(csv_output),
         has_draw_output ? std::optional(draw_path) : std::nullopt,
-        callbacks);
+        num_threads);
+
+      write_trajectory_warnings(std::cerr, summary);
 
       if (has_draw_output) { std::cout << "Wrote trajectory hull PDB: " << draw_output << '\n'; }
 
@@ -204,6 +215,9 @@ int main(int argc, char **argv)
 
     if (!csv_output.empty()) {
       throw watpocket::Error("-o/--output is only supported in trajectory mode (<topology> <trajectory>)");
+    }
+    if (num_threads != 1U) {
+      throw watpocket::Error("--threads is only supported in trajectory mode (<topology> <trajectory>)");
     }
 
     const auto result = watpocket::analyze_structure_file(input_path, selectors);

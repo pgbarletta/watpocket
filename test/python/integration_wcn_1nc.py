@@ -35,6 +35,7 @@ def main() -> int:
             selectors,
             str(output_csv),
             None,
+            2,
         )
 
         if summary.frames_processed == 0:
