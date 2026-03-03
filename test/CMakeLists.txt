@@ -152,6 +152,22 @@ if(EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" AND EXISTS "${WATPOCKET_
     PROPERTIES PASS_REGULAR_EXPRESSION "-o/--output is required in trajectory mode")
 
   add_test(
+    NAME cli.trajectory_threads_zero_fails
+    COMMAND
+      watpocket
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn_0.00000.nc"
+      --resnums
+      164,128,160,55
+      -o
+      "${CMAKE_CURRENT_BINARY_DIR}/threads_zero.csv"
+      --threads
+      0)
+  set_tests_properties(
+    cli.trajectory_threads_zero_fails
+    PROPERTIES PASS_REGULAR_EXPRESSION "num_threads must be >= 1")
+
+  add_test(
     NAME cli.parm7_requires_two_inputs
     COMMAND watpocket "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7" --resnums 164,128,160,55)
   set_tests_properties(
@@ -176,9 +192,29 @@ endif()
 
 if(TARGET watpocket_ext
    AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/0.nc"
+   AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/0.nc.csv"
    AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1.nc"
    AND EXISTS "${WATPOCKET_WCN_DATA_DIR}/1.nc.csv")
   find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+
+  add_test(
+    NAME integration.python.wcn_trajectory_0nc_threads
+    COMMAND
+      ${CMAKE_COMMAND}
+      -E
+      env
+      "PYTHONPATH=$<TARGET_FILE_DIR:watpocket_ext>"
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/integration_wcn_0nc_threads.py"
+      --topology
+      "${WATPOCKET_WCN_DATA_DIR}/complex_wcn.parm7"
+      --trajectory
+      "${WATPOCKET_WCN_DATA_DIR}/0.nc"
+      --benchmark
+      "${WATPOCKET_WCN_DATA_DIR}/0.nc.csv"
+      --resnums
+      "164,128,160,55,167,61,42,65,66")
 
   add_test(
     NAME integration.python.wcn_trajectory_1nc

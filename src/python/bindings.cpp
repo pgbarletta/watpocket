@@ -151,18 +151,21 @@ NB_MODULE(watpocket, m)
       const std::string &trajectory_path,
       const std::vector<watpocket::ResidueSelector> &selectors,
       const std::optional<std::string> &csv_output,
-      const std::optional<std::string> &draw_output_pdb) {
+      const std::optional<std::string> &draw_output_pdb,
+      const std::size_t num_threads) {
       return watpocket::analyze_trajectory_files(std::filesystem::path(topology_path),
         std::filesystem::path(trajectory_path),
         selectors,
         optional_path_from_string(csv_output),
-        optional_path_from_string(draw_output_pdb));
+        optional_path_from_string(draw_output_pdb),
+        num_threads);
     },
     "topology_path"_a,
     "trajectory_path"_a,
     "selectors"_a,
     "csv_output"_a = std::optional<std::string>{},
-    "draw_output_pdb"_a = std::optional<std::string>{});
+    "draw_output_pdb"_a = std::optional<std::string>{},
+    "num_threads"_a = 1U);
 
   m.def("write_pymol_draw_script",
     [](const std::string &input_path,

@@ -9,6 +9,8 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -33,10 +35,23 @@ fs::path unique_temp_nc_path(const std::string& stem)
   return fs::temp_directory_path() / ("watpocket-" + stem + "-" + std::to_string(ticks) + ".nc");
 }
 
+fs::path unique_temp_csv_path(const std::string& stem)
+{
+  const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+  return fs::temp_directory_path() / ("watpocket-" + stem + "-" + std::to_string(ticks) + ".csv");
+}
+
 struct TempFileGuard {
   fs::path path;
   ~TempFileGuard() { std::error_code ec; fs::remove(path, ec); }
 };
+
+std::string read_text_file(const fs::path& path)
+{
+  std::ifstream in(path);
+  if (!in) { throw std::runtime_error("failed to open file: " + path.string()); }
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
 
 void write_netcdf_from_pdb_frames(const fs::path& output_nc_path, const std::vector<fs::path>& frame_paths)
 {
@@ -465,5 +480,54 @@ TEST_CASE("analyze_trajectory_files throws when all frames fail analysis", "[api
     FAIL("Expected watpocket::Error");
   } catch (const watpocket::Error& e) {
     REQUIRE_THAT(e.what(), ContainsSubstring("all trajectory frames failed analysis"));
+  }
+}
+
+TEST_CASE("analyze_trajectory_files validates num_threads >= 1", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
+  const auto trajectory_path = fixture_path("test/data/wcn/1.nc");
+  REQUIRE(fs::exists(topology_path));
+  REQUIRE(fs::exists(trajectory_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55");
+  REQUIRE_THROWS_AS(
+    watpocket::analyze_trajectory_files(topology_path, trajectory_path, selectors, std::nullopt, std::nullopt, 0U),
+    watpocket::Error);
+}
+
+TEST_CASE("analyze_trajectory_files parallel output matches serial output", "[api]")
+{
+  const auto topology_path = fixture_path("test/data/wcn/complex_wcn.parm7");
+  const auto trajectory_path = fixture_path("test/data/wcn/1.nc");
+  REQUIRE(fs::exists(topology_path));
+  REQUIRE(fs::exists(trajectory_path));
+
+  const auto selectors = watpocket::parse_residue_selectors("164,128,160,55,167,61,42,65,66");
+  const auto serial_csv_path = unique_temp_csv_path("api-serial");
+  const auto parallel_csv_path = unique_temp_csv_path("api-parallel");
+  TempFileGuard serial_csv_cleanup{ serial_csv_path };
+  TempFileGuard parallel_csv_cleanup{ parallel_csv_path };
+
+  const auto serial_summary = watpocket::analyze_trajectory_files(
+    topology_path, trajectory_path, selectors, serial_csv_path, std::nullopt, 1U);
+  const auto parallel_summary = watpocket::analyze_trajectory_files(
+    topology_path, trajectory_path, selectors, parallel_csv_path, std::nullopt, 2U);
+
+  REQUIRE(read_text_file(serial_csv_path) == read_text_file(parallel_csv_path));
+  REQUIRE(parallel_summary.frames_processed == serial_summary.frames_processed);
+  REQUIRE(parallel_summary.frames_successful == serial_summary.frames_successful);
+  REQUIRE(parallel_summary.frames_skipped == serial_summary.frames_skipped);
+  REQUIRE(parallel_summary.min_waters == serial_summary.min_waters);
+  REQUIRE(parallel_summary.max_waters == serial_summary.max_waters);
+  REQUIRE(parallel_summary.mean_waters == Catch::Approx(serial_summary.mean_waters));
+  REQUIRE(parallel_summary.median_waters == Catch::Approx(serial_summary.median_waters));
+  REQUIRE(parallel_summary.has_skipped_frames == serial_summary.has_skipped_frames);
+  REQUIRE(parallel_summary.skipped_frame_warnings == serial_summary.skipped_frame_warnings);
+  REQUIRE(parallel_summary.top_waters.size() == serial_summary.top_waters.size());
+  for (std::size_t i = 0; i < parallel_summary.top_waters.size(); ++i) {
+    REQUIRE(parallel_summary.top_waters[i].resid == serial_summary.top_waters[i].resid);
+    REQUIRE(parallel_summary.top_waters[i].frames_present == serial_summary.top_waters[i].frames_present);
+    REQUIRE(parallel_summary.top_waters[i].fraction == Catch::Approx(serial_summary.top_waters[i].fraction));
   }
 }

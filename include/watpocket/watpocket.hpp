@@ -354,7 +354,8 @@ struct TrajectorySummary
   const std::filesystem::path &trajectory_path,
   const std::vector<ResidueSelector> &selectors,
   const std::optional<std::filesystem::path> &csv_output,
-  const std::optional<std::filesystem::path> &draw_output_pdb);
+  const std::optional<std::filesystem::path> &draw_output_pdb,
+  std::size_t num_threads = 1);
 
 // Draw writers (std-only API). These operate on watpocket-owned types and do not require Chemfiles.
 WATPOCKET_LIB_EXPORT void write_pymol_draw_script(const std::filesystem::path &input_path,

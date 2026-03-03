@@ -82,11 +82,12 @@
     - single-structure mode: `.py` PyMOL or `.pdb` hull
     - trajectory mode: `.pdb` only, written as per-frame `MODEL` blocks
   - `-o,--output` required CSV path in trajectory mode (CSV is file-only)
+  - `--threads` optional trajectory worker count (`>=1`, default `1`; `1` keeps serial execution)
   - `--version` (source: `src/watpocket/main.cpp:main`).
 - CMake options: sanitizers, static analyzers, ccache, coverage, IPO, hardening via `ProjectOptions.cmake` (source: `ProjectOptions.cmake`).
 - CMake option `WATPOCKET_ENABLE_PYTHON_BINDINGS` gates nanobind extension build in non-scikit workflows; scikit-build (`SKBUILD`) forces it on for wheel builds (source: `CMakeLists.txt`, `src/CMakeLists.txt`).
 - Python packaging surface is defined in `pyproject.toml` using `scikit-build-core` with build targets `watpocket`, `watpocket_ext`, and `watpocket_stub` (output module name `watpocket` plus generated `watpocket.pyi`, while keeping install rules satisfied); the extension installs with `RPATH=$ORIGIN/lib` so bundled `libwatpocket.so` resolves at import time, and editable/wheel builds default to `Release` with `clang-tidy`, `cppcheck`, and ASan/UBSan disabled via CMake defines for faster package builds (source: `pyproject.toml`, `src/python/CMakeLists.txt`, `ProjectOptions.cmake`).
-- Nanobind bindings in `src/python/bindings.cpp` mirror the current public trajectory API directly (`analyze_trajectory_files(...)` without callback parameters) and expose `TrajectorySummary` skip metadata (`has_skipped_frames`, `skipped_frame_warnings`) to Python.
+- Nanobind bindings in `src/python/bindings.cpp` mirror the current public trajectory API directly (`analyze_trajectory_files(..., num_threads=1)` without callback parameters) and expose `TrajectorySummary` skip metadata (`has_skipped_frames`, `skipped_frame_warnings`) to Python.
 - When Python bindings are enabled, `src/python/CMakeLists.txt` adds an `ALL` aggregate target (`watpocket_python_bindings`) so regular default builds include both `watpocket_ext` and `watpocket_stub`.
 - Install behavior is split by build context in `src/python/CMakeLists.txt`: under `SKBUILD`, extension + stub install to package-root destinations used by wheel/editable packaging; under native CMake (non-`SKBUILD`), installs are exposed only through the `pythoninstall` component, which writes `watpocket_ext` + `watpocket.pyi` into the selected interpreter `platlib` path, installs `libwatpocket.so*` into `platlib/lib` (matching module `RPATH=$ORIGIN/lib`), and fails fast if `watpocket` is already installed in that interpreter (users must uninstall first).
 - Env/config affecting dependency download/cache:
@@ -148,20 +149,24 @@ flowchart TD
   DRAW1 -->|.py| PY[Library: `write_pymol_draw_script(...)`]
   DRAW1 -->|.pdb| PDB[Library: `write_hull_pdb(...)`]
 
-  MODE -->|2| API2[Library: `watpocket::analyze_trajectory_files(topology, trajectory, ...)`]
+  MODE -->|2| API2[Library: `watpocket::analyze_trajectory_files(..., num_threads=1)`]
   API2 --> TOP{Topology backend}
   TOP -->|parm7/prmtop| P7[Parse parm7 topology]
   TOP -->|structure file| CF[Chemfiles: read topology frame]
   P7 --> CACHE[Cache CA indices + water refs]
   CF --> CACHE
   API2 --> SAN[Sanity check: traj has frames + atom-count matches]
-  SAN --> LOOP[Per-frame loop: read frame]
-  CACHE --> LOOP
-  LOOP --> FRAME[CA indices -> PointSoA -> hull -> water classification]
-  FRAME -->|ok| CSV[Write CSV row (if enabled)]
-  FRAME -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
-  FRAME -->|error| WARN[Record warning text in `TrajectorySummary::skipped_frame_warnings`; skip frame]
-  LOOP --> STATS[Accumulate stats]
+  SAN --> DISPATCH{num_threads == 1?}
+  CACHE --> DISPATCH
+  DISPATCH -->|yes| LOOP[Serial per-frame loop: read + analyze]
+  DISPATCH -->|no| READQ[Main thread reads frames + queues tasks]
+  READQ --> WORK[Worker pool computes frame hull/water]
+  LOOP --> COMMIT[Ordered commit by frame number]
+  WORK --> COMMIT
+  COMMIT -->|ok| CSV[Write CSV row (if enabled)]
+  COMMIT -->|ok| TDRAW[Append MODEL to trajectory draw PDB (if enabled)]
+  COMMIT -->|error| WARN[Record warning text in `TrajectorySummary::skipped_frame_warnings`; skip frame]
+  COMMIT --> STATS[Accumulate stats]
   STATS --> RES2[`TrajectorySummary`\n(with `has_skipped_frames` + warning map)]
   RES2 --> OUT2[CLI prints warnings + stats + processed counts]
 ```
@@ -170,7 +175,7 @@ flowchart TD
 - Inputs are parsed with CLI11 in `main()`.
 - Non-CLI callers can directly obtain CA or arbitrary atom subsets through `read_structure_points_by_atom_indices(...)` and `read_trajectory_points_by_atom_indices(...)` without exposing Chemfiles/CGAL in the public header.
 - For 1 positional file, the CLI calls `watpocket::analyze_structure_file(...)`; the library uses Chemfiles to read one frame and runs structure-mode analysis + optional draw writing.
-- For 2 positional files, the CLI calls `watpocket::analyze_trajectory_files(...)`; the library loads topology once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), caches CA/water atom indices, streams NetCDF frames, writes one CSV row per successful frame, and stores frame-local skip warnings in the returned `TrajectorySummary`.
+- For 2 positional files, the CLI calls `watpocket::analyze_trajectory_files(..., num_threads)`; the library loads topology once (via Chemfiles for structure files or custom parser for `parm7/prmtop`), caches CA/water atom indices, streams NetCDF frames, and either runs serial frame analysis (`num_threads=1`) or worker-pool frame analysis (`num_threads>1`) with ordered commit so CSV/draw outputs remain frame-ordered; frame-local skip warnings are stored in the returned `TrajectorySummary`.
 - Residue selectors are parsed and mapped to residue objects using topology-derived lookup tables; each selected residue must map to exactly one residue and exactly one `CA` atom.
 - CA coordinates are extracted into `watpocket::PointSoA` buffers and passed as `PointSoAView` to the private CGAL adapter.
 - The private adapter (`src/watpocket_lib/point_soa_cgal_adapter.cpp`) computes `CGAL::Surface_mesh` hull geometry and inward-oriented halfspaces.
@@ -197,7 +202,7 @@ main
   -> `.pdb`: watpocket::write_hull_pdb
 ```
 3. Topology + trajectory invocation (NetCDF, multi-backend topology)
-   - Form: `watpocket <topology.{pdb|cif|mmcif|parm7|prmtop}> <trajectory.nc> --resnums ... -o output.csv [-d hull_models.pdb]`.
+  - Form: `watpocket <topology.{pdb|cif|mmcif|parm7|prmtop}> <trajectory.nc> --resnums ... -o output.csv [--threads N] [-d hull_models.pdb]`.
    - Call spine:
 ```text
 main
@@ -212,9 +217,9 @@ main
 - Correctness (units/PBC): no coordinate transforms or unit conversion implemented; correctness assumes input coordinates are directly suitable for hull geometry (source: `src/watpocket_lib/watpocket.cpp`).
 - Geometry robustness: explicit degeneracy guards + exact-predicate kernel + face-orientation correction in the private adapter (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`).
 - Determinism: uses deterministic containers/sorting for output IDs and deduplicated edges (`std::set`) (source: `src/watpocket_lib/point_soa_cgal_adapter.cpp:compute_hull_data`, `src/watpocket_lib/watpocket.cpp:find_waters_inside_hull`).
-- Performance: single-threaded loops; trajectory mode streams frames sequentially and performs hull/classification per frame (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`).
+- Performance: trajectory mode streams frames sequentially from a single reader and can optionally parallelize frame analysis with a fixed-size worker pool when `num_threads > 1`; `num_threads = 1` preserves serial behavior (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`).
 - Error reporting: fatal errors throw `watpocket::Error` (caught and printed by the CLI), trajectory frame-local compute failures are recorded in `TrajectorySummary::skipped_frame_warnings` and counted as skipped, and `analyze_trajectory_files(...)` throws if all processed frames fail analysis (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
-- Trajectory warning structure: per-frame compute + CSV/draw writes execute in a frame-local guarded block that returns optional water IDs; failed frames insert warning text keyed by frame number, and CLI prints warnings after receiving the summary (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
+- Trajectory warning structure: per-frame compute normalizes errors to warning strings keyed by frame number; failures are counted as skipped, and CLI prints warnings after receiving the summary. In parallel mode warnings are still committed in frame order (source: `src/watpocket_lib/watpocket.cpp:analyze_trajectory_files`, `src/watpocket/main.cpp:main`).
 
 ## 3. Domain Data Model
 ### Chemical view
@@ -412,7 +417,7 @@ flowchart LR
 
 ## 7. Parallel & Performance Model
 ### Parallelization strategy
-- Runtime analysis code is single-threaded; there is no OpenMP/TBB/std::execution/MPI in watpocket core (source: `src/watpocket_lib/watpocket.cpp`).
+- Runtime analysis remains CPU-only and uses standard-library threading only (no OpenMP/TBB/std::execution/MPI): `analyze_trajectory_files(..., num_threads)` runs serially when `num_threads==1`, otherwise uses a fixed-size `std::thread` worker pool for frame compute while keeping ordered output commit on the calling thread (source: `src/watpocket_lib/watpocket.cpp`).
 - Build system supports parallel compilation via CMake generator/build tool, but that is build-time only.
 
 ### Determinism expectations and reduction policies
@@ -420,11 +425,11 @@ flowchart LR
 - Floating-point values in script are formatted with fixed precision 4 decimals (source: `src/watpocket_lib/watpocket.cpp:write_pymol_draw_script`).
 
 ### Memory/layout strategy and caching
-- Transient vectors/maps are allocated per invocation (`ResidueLookup`, edge vectors, halfspaces); trajectory mode caches CA atom indices and water oxygen atom refs and reuses a `PointSoA` CA buffer per frame (source: `src/watpocket_lib/watpocket.cpp`, `src/watpocket_lib/point_soa_cgal_adapter.cpp`).
+- Transient vectors/maps are allocated per invocation (`ResidueLookup`, edge vectors, halfspaces); trajectory mode caches CA atom indices and water oxygen atom refs once, then performs frame-local `PointSoA`/hull intermediates per task (serial or worker thread) (source: `src/watpocket_lib/watpocket.cpp`, `src/watpocket_lib/point_soa_cgal_adapter.cpp`).
 - Structure mode reads one frame; trajectory mode reads one frame at a time, emits CSV rows incrementally, and accumulates frame-level summary counters for final statistics.
 
 ### I/O vs compute overlap
-- No overlap exists, but trajectory mode is frame-streaming and strictly sequential in `main()`.
+- In trajectory mode the reader remains sequential, but with `num_threads > 1` frame compute overlaps across worker tasks; CSV/draw emission and summary accumulation stay ordered on the main thread.
 
 ### Benchmark harness and profiling hooks
 - No dedicated watpocket benchmark targets found.
@@ -451,6 +456,7 @@ flowchart LR
     - trajectory `--draw .py` is rejected
   - trajectory-mode contract:
     - missing `-o` in trajectory mode should fail
+    - `--threads 0` should fail (`num_threads must be >= 1`)
   - `parm7` guardrails:
     - single-input `parm7` should fail with trajectory-mode guidance
     - chain-qualified selectors on `parm7` without `RESIDUE_CHAINID` should fail (source: `test/CMakeLists.txt`).
@@ -458,7 +464,8 @@ flowchart LR
   - `integration.wcn.pymol_scripts_match_benchmark` runs `test/integration/wcn/run.sh` on `test/data/wcn/0complex_wcn.pdb` and `test/data/wcn/1complex_wcn.pdb`, then compares generated scripts against benchmark files `test/data/wcn/0complex_wcn.py` and `test/data/wcn/1complex_wcn.py` via `test/integration/wcn/verify_outputs_match_benchmarks.cmake` (source: `test/CMakeLists.txt`, `test/integration/wcn/run.sh`, `test/integration/wcn/verify_outputs_match_benchmarks.cmake`).
   - `integration.wcn.trajectory_0_csv_matches_benchmark` and `integration.wcn.trajectory_1_csv_matches_benchmark` run topology+NetCDF trajectory mode without `--draw` using `test/data/wcn/complex_wcn.parm7` + `test/data/wcn/{0.nc,1.nc}`, then compare generated CSV files against `test/data/wcn/{0.nc.csv,1.nc.csv}` via `test/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake` (source: `test/CMakeLists.txt`, `test/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake`).
   - `integration.python.wcn_trajectory_1nc` runs the nanobind module via CTest (`PYTHONPATH=$<TARGET_FILE_DIR:watpocket_ext>`) and verifies Python API trajectory analysis on `test/data/wcn/1.nc` against benchmark `test/data/wcn/1.nc.csv` (source: `test/CMakeLists.txt`, `test/python/integration_wcn_1nc.py`, `src/python/bindings.cpp`).
-- Unit tests cover selector parsing, public `PointSoA`/view contracts, and exported point-reader APIs (structure + trajectory success/failure contracts, determinism, empty/duplicate index behavior) in `watpocket_api_tests`, alongside CLI smoke tests (source: `test/CMakeLists.txt`, `test/watpocket_api_tests.cpp`).
+  - `integration.python.wcn_trajectory_0nc_threads` runs the nanobind module via CTest on `test/data/wcn/0.nc` and asserts `analyze_trajectory_files(..., num_threads)` produces identical CSV output for `num_threads` in `{1,2,4}`, then checks that output against benchmark `test/data/wcn/0.nc.csv` (source: `test/CMakeLists.txt`, `test/python/integration_wcn_0nc_threads.py`, `src/python/bindings.cpp`).
+- Unit tests cover selector parsing, public `PointSoA`/view contracts, and exported point-reader APIs (structure + trajectory success/failure contracts, determinism, empty/duplicate index behavior) in `watpocket_api_tests`, plus trajectory-threading checks (`num_threads >= 1` validation and serial/parallel output equivalence), alongside CLI smoke tests (source: `test/CMakeLists.txt`, `test/watpocket_api_tests.cpp`).
 - API fixture roots are under `test/data/wcn/`; mismatch-path coverage no longer depends on deleted fixture files and now writes a synthetic one-atom NetCDF frame in-test to validate topology/trajectory atom-count mismatch errors (source: `test/watpocket_api_tests.cpp`).
 - Draw output tests include content validation through `test/verify_draw_pdb_contains_waters.cmake`, asserting that generated draw PDBs contain water atoms for the WCN sample configuration.
 
@@ -565,6 +572,7 @@ flowchart LR
 - `test/data/wcn/1.nc.csv`
 - `src/python/CMakeLists.txt`
 - `src/python/bindings.cpp`
+- `test/python/integration_wcn_0nc_threads.py`
 - `test/python/integration_wcn_1nc.py`
 - `test/integration/wcn/run.sh`
 - `test/integration/wcn/verify_outputs_match_benchmarks.cmake`

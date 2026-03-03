@@ -125,6 +125,7 @@ int main(int argc, char **argv)
   std::string resnums;
   std::string draw_output;
   std::string csv_output;
+  std::size_t num_threads = 1;
 
   app.set_version_flag("--version", std::string(myproject::cmake::project_version));
   app.add_option("inputs", inputs, "Input files: <structure> or <topology> <trajectory>")->required()->expected(1, 2);
@@ -134,6 +135,8 @@ int main(int argc, char **argv)
     "Write draw output. Single-structure mode: .py (PyMOL script) or .pdb (hull PDB). "
     "Trajectory mode: .pdb only (hull per frame using MODEL/ENDMDL).");
   app.add_option("-o,--output", csv_output, "Write trajectory CSV output to this path (required in trajectory mode).");
+  app.add_option(
+    "--threads", num_threads, "Trajectory worker threads for frame analysis (default: 1; 1 disables parallelism).");
 
   try {
     app.parse(argc, argv);
@@ -174,7 +177,8 @@ int main(int argc, char **argv)
         trajectory_path,
         selectors,
         std::filesystem::path(csv_output),
-        has_draw_output ? std::optional(draw_path) : std::nullopt);
+        has_draw_output ? std::optional(draw_path) : std::nullopt,
+        num_threads);
 
       write_trajectory_warnings(std::cerr, summary);
 
@@ -211,6 +215,9 @@ int main(int argc, char **argv)
 
     if (!csv_output.empty()) {
       throw watpocket::Error("-o/--output is only supported in trajectory mode (<topology> <trajectory>)");
+    }
+    if (num_threads != 1U) {
+      throw watpocket::Error("--threads is only supported in trajectory mode (<topology> <trajectory>)");
     }
 
     const auto result = watpocket::analyze_structure_file(input_path, selectors);
