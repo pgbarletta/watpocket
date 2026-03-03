@@ -53,11 +53,11 @@
 │   ├── chemfiles/             # vendored dependency
 │   └── cgal/                  # vendored dependency
 ├── .codex/agents/             # Codex agent prompts (planner/mapper/refactorer)
-└── .github/workflows/         # CI, CodeQL, formatting, wasm template flow
+└── .github/workflows/         # CI, CodeQL, formatting, wasm
 ```
 
 ### Build systems and entrypoints
-- Build system is CMake; top-level adds `configured_files`, `src`, and optionally `test`/`fuzz_test` (source: `CMakeLists.txt`).
+- Build system is CMake; top-level adds `configured_files`, `src`, and optionally `test` (source: `CMakeLists.txt`).
 - Runtime entrypoint for project deliverable is `src/watpocket/main.cpp` (`main`) (source: `src/watpocket/main.cpp:main`).
 - `src/CMakeLists.txt` currently builds `watpocket_lib` and `watpocket` (source: `src/CMakeLists.txt`).
 - For VSCode, the `vscode-release`/`vscode-watpocket` CMake presets configure into `./build` and build only the `watpocket` target with sanitizers/analyzers disabled (matches `comp.sh`) (source: `CMakePresets.json`, `comp.sh`).
@@ -532,8 +532,6 @@ flowchart LR
 - `test/watpocket_api_tests.cpp`
 - `test/package_consumer.cpp`
 - `test/CMakeLists.txt`
-- `fuzz_test/CMakeLists.txt`
-- `fuzz_test/fuzz_tester.cpp`
 - `configured_files/CMakeLists.txt`
 - `configured_files/config.hpp.in`
 - `cmake/CPM.cmake`
@@ -552,7 +550,6 @@ flowchart LR
 - `.github/workflows/auto-clang-format.yml`
 - `.github/workflows/ci.yml`
 - `.github/workflows/codeql-analysis.yml`
-- `.github/workflows/template-janitor.yml`
 - `.github/workflows/wasm.yml`
 - `.gitlab-ci.yml`
 - `.codex/agents/mapper.md`
