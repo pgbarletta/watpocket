@@ -7,6 +7,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+      with:
+        # Checkout the PR head branch (not the merge commit) so push works.
+        ref: ${{ github.head_ref }}
     - uses: DoozyX/clang-format-lint-action@v0.20
       with:
         source: '.'
@@ -15,6 +18,7 @@ jobs:
         clangFormatVersion: 19
         inplace: True
     - uses: EndBug/add-and-commit@v9
+      if: github.event.pull_request.head.repo.full_name == github.repository
       with:
         author_name: Clang Robot
         author_email: robot@example.com

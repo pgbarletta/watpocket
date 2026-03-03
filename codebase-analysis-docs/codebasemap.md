@@ -452,6 +452,7 @@ flowchart LR
 - Linux CI jobs install `libboost-dev`, and macOS CI jobs install Homebrew `boost`, before CMake configure so vendored CGAL's required `find_package(Boost 1.74)` succeeds on GitHub-hosted runners (source: `.github/workflows/ci.yml`, `.github/workflows/codeql-analysis.yml`, `external/cgal/Installation/cmake/modules/CGAL_SetupBoost.cmake`).
 - In `ci.yml`, tests/coverage execution runs on non-Windows runners, and Codecov upload runs only when `runner.os != 'Windows'` and `secrets.CODECOV_TOKEN` is set (source: `.github/workflows/ci.yml`).
 - CI configure commands explicitly set `myproject_WARNINGS_AS_ERRORS=OFF` (via `${PROJECT_NAME}_WARNINGS_AS_ERRORS` in `ci.yml`/`codeql-analysis.yml`, and direct `myproject_WARNINGS_AS_ERRORS` in `wasm.yml`) to avoid hard-failing builds on warnings (source: `.github/workflows/ci.yml`, `.github/workflows/codeql-analysis.yml`, `.github/workflows/wasm.yml`, `.github/constants.env`).
+- `auto-clang-format.yml` checks out `github.head_ref` (PR source branch) to avoid detached-HEAD commit/push failures, and only runs `add-and-commit` for same-repository PRs (`github.event.pull_request.head.repo.full_name == github.repository`) (source: `.github/workflows/auto-clang-format.yml`).
 - Sanitizers and static analyzers are enabled by default in top-level non-maintainer builds unless explicitly disabled (source: `ProjectOptions.cmake`, `cmake/Sanitizers.cmake`).
 - CPM bootstrap performs network download unless cached/offline-provided (source: `cmake/CPM.cmake`).
 
