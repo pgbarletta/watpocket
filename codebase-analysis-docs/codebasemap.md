@@ -65,6 +65,7 @@
 ### How chemfiles and CGAL are discovered/linked
 - CGAL: `find_package(CGAL CONFIG REQUIRED PATHS external/cgal NO_DEFAULT_PATH)` (source: `Dependencies.cmake`).
 - Chemfiles: vendored subdirectory `add_subdirectory(external/chemfiles ...)` with tests/docs disabled; dependency setup forces `CMAKE_POSITION_INDEPENDENT_CODE ON` before adding chemfiles so its static objects can link into shared `watpocket_lib` (source: `Dependencies.cmake`, `src/watpocket_lib/CMakeLists.txt`).
+- Vendored chemfiles carries a local selection-AST compatibility fix for LLVM/libstdc++ builds: `Math` has an out-of-line destructor so `std::unique_ptr<MathExpr>` is destroyed only where `MathExpr` is complete (source: `external/chemfiles/include/chemfiles/selections/expr.hpp`, `external/chemfiles/src/selections/expr.cpp`).
 - CPM remains enabled and currently fetches Catch2 + CLI11 if absent (source: `Dependencies.cmake`, `cmake/CPM.cmake`).
 - CPM bootstrap always performs a `file(DOWNLOAD ...)` for `CPM.cmake` unless provided via cache location/environment path (source: `cmake/CPM.cmake`).
 
