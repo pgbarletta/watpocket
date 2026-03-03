@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# uv -vv pip install -e . --no-progress -Cbuild.verbose=true
+#
 cmake -S . -B build \
 	-DCMAKE_BUILD_TYPE=Release \
 	-Dmyproject_ENABLE_SANITIZER_ADDRESS=OFF \

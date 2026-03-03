@@ -38,6 +38,7 @@
 ```text
 .
 ├── CMakeLists.txt
+├── pyproject.toml             # scikit-build-core packaging for nanobind Python extension
 ├── Dependencies.cmake
 ├── ProjectOptions.cmake
 ├── cmake/                     # shared CMake modules (sanitizers, warnings, linker, CPM bootstrap)
@@ -47,9 +48,11 @@
 ├── src/
 │   ├── watpocket_lib/         # watpocket library target (implementation)
 │   ├── watpocket/             # production CLI binary
+│   ├── python/                # nanobind Python extension target (`watpocket`)
 ├── test/                      # template tests + CLI smoke tests + integration scripts
-├── test/data/wcn/             # watpocket sample inputs + benchmark PyMOL scripts
-├── test/integration/wcn/      # integration runner + benchmark comparator
+├── test/python/               # Python integration checks executed via CTest
+├── test/data/wcn/             # watpocket sample inputs + benchmark PyMOL/trajectory CSV outputs
+├── test/integration/wcn/      # integration runners + benchmark comparators
 ├── external/
 │   ├── chemfiles/             # vendored dependency
 │   └── cgal/                  # vendored dependency
@@ -60,7 +63,7 @@
 ### Build systems and entrypoints
 - Build system is CMake; top-level adds `configured_files`, `src`, and optionally `test` (source: `CMakeLists.txt`).
 - Runtime entrypoint for project deliverable is `src/watpocket/main.cpp` (`main`) (source: `src/watpocket/main.cpp:main`).
-- `src/CMakeLists.txt` currently builds `watpocket_lib` and `watpocket` (source: `src/CMakeLists.txt`).
+- `src/CMakeLists.txt` builds `watpocket_lib` + `watpocket`, and conditionally adds `src/python` when `WATPOCKET_ENABLE_PYTHON_BINDINGS=ON` (auto-enabled under scikit-build) (source: `src/CMakeLists.txt`, `CMakeLists.txt`, `src/python/CMakeLists.txt`).
 - For VSCode, the `vscode-release`/`vscode-watpocket` CMake presets configure into `./build` and build only the `watpocket` target with sanitizers/analyzers disabled (matches `comp.sh`) (source: `CMakePresets.json`, `comp.sh`).
 
 ### How chemfiles and CGAL are discovered/linked
@@ -80,6 +83,8 @@
   - `-o,--output` required CSV path in trajectory mode (CSV is file-only)
   - `--version` (source: `src/watpocket/main.cpp:main`).
 - CMake options: sanitizers, static analyzers, ccache, coverage, IPO, hardening via `ProjectOptions.cmake` (source: `ProjectOptions.cmake`).
+- CMake option `WATPOCKET_ENABLE_PYTHON_BINDINGS` gates nanobind extension build in non-scikit workflows; scikit-build (`SKBUILD`) forces it on for wheel builds (source: `CMakeLists.txt`, `src/CMakeLists.txt`).
+- Python packaging surface is defined in `pyproject.toml` using `scikit-build-core` with build targets `watpocket`, `watpocket_ext`, and `watpocket_stub` (output module name `watpocket` plus generated `watpocket.pyi`, while keeping install rules satisfied); the extension installs with `RPATH=$ORIGIN/lib` so bundled `libwatpocket.so` resolves at import time, and editable/wheel builds default to `Release` with `clang-tidy`, `cppcheck`, and ASan/UBSan disabled via CMake defines for faster package builds (source: `pyproject.toml`, `src/python/CMakeLists.txt`, `ProjectOptions.cmake`).
 - Env/config affecting dependency download/cache:
   - `CPM_SOURCE_CACHE` env/CMake variable changes CPM download location (source: `cmake/CPM.cmake`).
 - Presets exist for multi-platform configure/test flows (source: `CMakePresets.json`).
@@ -446,6 +451,8 @@ flowchart LR
     - chain-qualified selectors on `parm7` without `RESIDUE_CHAINID` should fail (source: `test/CMakeLists.txt`).
 - Integration regression test:
   - `integration.wcn.pymol_scripts_match_benchmark` runs `test/integration/wcn/run.sh` on `test/data/wcn/0complex_wcn.pdb` and `test/data/wcn/1complex_wcn.pdb`, then compares generated scripts against benchmark files `test/data/wcn/0complex_wcn.py` and `test/data/wcn/1complex_wcn.py` via `test/integration/wcn/verify_outputs_match_benchmarks.cmake` (source: `test/CMakeLists.txt`, `test/integration/wcn/run.sh`, `test/integration/wcn/verify_outputs_match_benchmarks.cmake`).
+  - `integration.wcn.trajectory_0_csv_matches_benchmark` and `integration.wcn.trajectory_1_csv_matches_benchmark` run topology+NetCDF trajectory mode without `--draw` using `test/data/wcn/complex_wcn.parm7` + `test/data/wcn/{0.nc,1.nc}`, then compare generated CSV files against `test/data/wcn/{0.nc.csv,1.nc.csv}` via `test/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake` (source: `test/CMakeLists.txt`, `test/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake`).
+  - `integration.python.wcn_trajectory_1nc` runs the nanobind module via CTest (`PYTHONPATH=$<TARGET_FILE_DIR:watpocket_ext>`) and verifies Python API trajectory analysis on `test/data/wcn/1.nc` against benchmark `test/data/wcn/1.nc.csv` (source: `test/CMakeLists.txt`, `test/python/integration_wcn_1nc.py`, `src/python/bindings.cpp`).
 - Unit tests cover selector parsing, public `PointSoA`/view contracts, and exported point-reader APIs (structure + trajectory success/failure contracts, determinism, empty/duplicate index behavior) in `watpocket_api_tests`, alongside CLI smoke tests (source: `test/CMakeLists.txt`, `test/watpocket_api_tests.cpp`).
 - API fixture roots are under `test/data/wcn/`; mismatch-path coverage no longer depends on deleted fixture files and now writes a synthetic one-atom NetCDF frame in-test to validate topology/trajectory atom-count mismatch errors (source: `test/watpocket_api_tests.cpp`).
 - Draw output tests include content validation through `test/verify_draw_pdb_contains_waters.cmake`, asserting that generated draw PDBs contain water atoms for the WCN sample configuration.
@@ -546,9 +553,16 @@ flowchart LR
 - `README_building.md`
 - `README_dependencies.md`
 - `README_docker.md`
+- `pyproject.toml`
 - `test/data/wcn/0complex_wcn.py`
 - `test/data/wcn/1complex_wcn.py`
+- `test/data/wcn/0.nc.csv`
+- `test/data/wcn/1.nc.csv`
+- `src/python/CMakeLists.txt`
+- `src/python/bindings.cpp`
+- `test/python/integration_wcn_1nc.py`
 - `test/integration/wcn/run.sh`
 - `test/integration/wcn/verify_outputs_match_benchmarks.cmake`
+- `test/integration/wcn/verify_trajectory_csv_matches_benchmark.cmake`
 - `.gitlab-ci.yml`
 - `.codex/agents/mapper.md`

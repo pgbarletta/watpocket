@@ -39,4 +39,4 @@ Thumbs.db
 # mine
 external/cgal/.git
 external/chemfiles/.git
-*nc
+Testing/

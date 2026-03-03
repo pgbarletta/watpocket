@@ -41,6 +41,11 @@ myproject_local_options()
 # don't know if this should be set globally from here or not...
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
+option(WATPOCKET_ENABLE_PYTHON_BINDINGS "Build Python bindings via nanobind" OFF)
+if(SKBUILD)
+  set(WATPOCKET_ENABLE_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings via nanobind" FORCE)
+endif()
+
 set(GIT_SHA
     "Unknown"
     CACHE STRING "SHA this build was generated from")
