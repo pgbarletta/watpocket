@@ -1,5 +1,7 @@
 add_subdirectory(watpocket_lib)
-add_subdirectory(watpocket)
+if(WATPOCKET_BUILD_CLI)
+  add_subdirectory(watpocket)
+endif()
 
 if(WATPOCKET_ENABLE_PYTHON_BINDINGS)
   add_subdirectory(python)

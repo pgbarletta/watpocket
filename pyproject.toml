@@ -24,12 +24,13 @@ dev = [
 [tool.scikit-build]
 cmake.version = ">=3.28"
 cmake.build-type = "Release"
-build.targets = ["watpocket", "watpocket_ext", "watpocket_stub"]
+build.targets = ["watpocket_ext", "watpocket_stub"]
 wheel.packages = []
 experimental = true
 
 [tool.scikit-build.cmake.define]
 WATPOCKET_ENABLE_PYTHON_BINDINGS = "ON"
+WATPOCKET_BUILD_CLI = "OFF"
 CMAKE_BUILD_TYPE = "Release"
 myproject_ENABLE_SANITIZER_ADDRESS = "OFF"
 myproject_ENABLE_SANITIZER_UNDEFINED = "OFF"

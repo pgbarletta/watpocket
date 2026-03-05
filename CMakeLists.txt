@@ -73,8 +73,10 @@ myproject_local_options()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 option(WATPOCKET_ENABLE_PYTHON_BINDINGS "Build Python bindings via nanobind" OFF)
+option(WATPOCKET_BUILD_CLI "Build the watpocket CLI executable" ON)
 if(SKBUILD)
   set(WATPOCKET_ENABLE_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings via nanobind" FORCE)
+  set(WATPOCKET_BUILD_CLI OFF CACHE BOOL "Build the watpocket CLI executable" FORCE)
 endif()
 
 if(NOT DEFINED GIT_SHA OR GIT_SHA STREQUAL "" OR GIT_SHA STREQUAL "Unknown")
@@ -146,7 +148,9 @@ if(MSVC)
 endif()
 
 # set the startup project for the "play" button in MSVC
-set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT watpocket)
+if(TARGET watpocket)
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT watpocket)
+endif()
 
 if(CMAKE_SKIP_INSTALL_RULES)
   return()
@@ -172,7 +176,9 @@ myproject_package_project(
 # Install the CLI binary as a runtime artifact, but do not export it as part of
 # the CMake package to avoid name conflicts with the `watpocket` library target.
 include(GNUInstallDirs)
-install(TARGETS watpocket RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT bin)
+if(TARGET watpocket)
+  install(TARGETS watpocket RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT bin)
+endif()
 
 # Experience shows that explicit package naming can help make it easier to sort
 # out potential ABI related issues before they start, while helping you
