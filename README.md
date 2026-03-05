@@ -188,13 +188,7 @@ git push origin X.Y.Z
 scripts/pypi_release_wheels.sh --build-only
 ```
 
-4. Upload to TestPyPI (recommended first):
-
-```bash
-scripts/pypi_release_wheels.sh --testpypi
-```
-
-5. Upload to PyPI:
+4. Upload to PyPI:
 
 ```bash
 scripts/pypi_release_wheels.sh

@@ -115,6 +115,22 @@ namespace {
     return text;
   }
 
+  bool should_ignore_chemfiles_warning(const std::string &message)
+  {
+    return message.find("PDB reader: ignoring custom space group") != std::string::npos;
+  }
+
+  void install_chemfiles_warning_filter()
+  {
+    static std::once_flag install_once;
+    std::call_once(install_once, []() {
+      chemfiles::set_warning_callback([](const std::string &message) {
+        if (should_ignore_chemfiles_warning(message)) { return; }
+        std::cerr << "[chemfiles] " << message << '\n';
+      });
+    });
+  }
+
   std::int64_t parse_int64(const std::string &text)
   {
     std::size_t parsed = 0;
@@ -1187,6 +1203,8 @@ PointSoA read_structure_points_by_atom_indices(const std::filesystem::path &inpu
   std::string_view label)
 {
   try {
+    install_chemfiles_warning_filter();
+
     if (!std::filesystem::exists(input_path)) {
       throw Error("input file does not exist: '" + input_path.string() + "'");
     }
@@ -1217,6 +1235,8 @@ PointSoA read_trajectory_points_by_atom_indices(const std::filesystem::path &top
   std::string_view label)
 {
   try {
+    install_chemfiles_warning_filter();
+
     if (!std::filesystem::exists(topology_path)) {
       throw Error("topology file does not exist: '" + topology_path.string() + "'");
     }
@@ -1274,6 +1294,8 @@ StructureAnalysisResult analyze_structure_file(const std::filesystem::path &inpu
   const std::vector<ResidueSelector> &selectors)
 {
   try {
+    install_chemfiles_warning_filter();
+
     if (!std::filesystem::exists(input_path)) {
       throw Error("input file does not exist: '" + input_path.string() + "'");
     }
@@ -1310,6 +1332,8 @@ TrajectorySummary analyze_trajectory_files(const std::filesystem::path &topology
   const std::size_t num_threads)
 {
   try {
+    install_chemfiles_warning_filter();
+
     validate_trajectory_analysis_inputs(topology_path, trajectory_path, draw_output_pdb, num_threads);
     const auto context = prepare_trajectory_topology_context(topology_path, selectors);
     validate_trajectory_sanity(trajectory_path, context);
