@@ -191,18 +191,16 @@ scripts/pypi_release_wheels.sh --build-only
 4. Upload to TestPyPI (recommended first):
 
 ```bash
-export TWINE_PASSWORD="<testpypi-token>"
 scripts/pypi_release_wheels.sh --testpypi
 ```
 
 5. Upload to PyPI:
 
 ```bash
-export TWINE_PASSWORD="<pypi-token>"
 scripts/pypi_release_wheels.sh
 ```
 
 Notes:
-- Accepted release tags are `X.Y.Z` no `vX.Y.Z`
+- Accepted release tags are `X.Y.Z` or `vX.Y.Z`.
 - The script uploads `dist/watpocket-<version>-*.whl` only (no source distribution).
-- Default Twine username is `__token__`; override with `TWINE_USERNAME` if needed.
+- Twine credentials can come from `~/.pypirc`, keyring, or `TWINE_USERNAME`/`TWINE_PASSWORD`.

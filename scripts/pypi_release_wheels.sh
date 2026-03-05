@@ -11,8 +11,9 @@ exact git tag at HEAD (vX.Y.Z or X.Y.Z).
 Environment:
   PYTHON_BIN            Python executable to use (default: python)
   TWINE_REPOSITORY      Override repository name (default: pypi, or testpypi with --testpypi)
-  TWINE_USERNAME        Twine username (default: __token__)
-  TWINE_PASSWORD        Twine token/password
+  TWINE_USERNAME        Optional Twine username override
+  TWINE_PASSWORD        Optional Twine password/token override
+                        If unset, Twine can read credentials from ~/.pypirc or keyring.
 EOF
 }
 
@@ -90,16 +91,19 @@ if [[ "${BUILD_ONLY}" -eq 1 ]]; then
   exit 0
 fi
 
-if [[ -z "${TWINE_PASSWORD:-}" ]]; then
-  echo "TWINE_PASSWORD is not set; refusing to upload." >&2
-  exit 1
+TWINE_ARGS=()
+if [[ -n "${TWINE_USERNAME:-}" ]]; then
+  TWINE_ARGS+=(--username "${TWINE_USERNAME}")
+fi
+if [[ -n "${TWINE_PASSWORD:-}" ]]; then
+  TWINE_ARGS+=(--password "${TWINE_PASSWORD}")
 fi
 
-TWINE_USERNAME="${TWINE_USERNAME:-__token__}" \
-  "${PYTHON_BIN}" -m twine upload \
+"${PYTHON_BIN}" -m twine upload \
   --repository "${REPOSITORY}" \
   --non-interactive \
   --skip-existing \
+  "${TWINE_ARGS[@]}" \
   dist/watpocket-"${VERSION}"-*.whl
 
 echo "Uploaded wheels for ${VERSION} (${SHORT_SHA}) to ${REPOSITORY}."
