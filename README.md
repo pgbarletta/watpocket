@@ -204,3 +204,4 @@ Notes:
 - Accepted release tags are `X.Y.Z` or `vX.Y.Z`.
 - The script uploads `dist/watpocket-<version>-*.whl` only (no source distribution).
 - Twine credentials can come from `~/.pypirc`, keyring, or `TWINE_USERNAME`/`TWINE_PASSWORD`.
+- On Linux, wheels are repaired with `auditwheel` before upload so PyPI accepts `manylinux` tags (not plain `linux_x86_64`).

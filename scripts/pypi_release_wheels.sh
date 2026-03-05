@@ -14,6 +14,8 @@ Environment:
   TWINE_USERNAME        Optional Twine username override
   TWINE_PASSWORD        Optional Twine password/token override
                         If unset, Twine can read credentials from ~/.pypirc or keyring.
+                        On Linux, auditwheel is used to repair linux_x86_64 wheels
+                        into manylinux wheels before upload.
 EOF
 }
 
@@ -83,8 +85,41 @@ if [[ ! -e "${WHEELS[0]}" ]]; then
   exit 1
 fi
 
+if [[ "$(uname -s)" == "Linux" ]]; then
+  NEED_REPAIR=()
+  for wheel in "${WHEELS[@]}"; do
+    if [[ "${wheel}" == *linux_x86_64.whl ]]; then
+      NEED_REPAIR+=("${wheel}")
+    fi
+  done
+
+  if [[ "${#NEED_REPAIR[@]}" -gt 0 ]]; then
+    echo "Repairing Linux wheel tag(s) with auditwheel to produce manylinux wheel(s)..."
+    REPAIR_DIR="$(mktemp -d)"
+    trap 'rm -rf "${BUILD_RUN_DIR}" "${REPAIR_DIR}"' EXIT
+
+    if "${PYTHON_BIN}" -c "import auditwheel" >/dev/null 2>&1; then
+      AUDITWHEEL_RUN=("${PYTHON_BIN}" -m auditwheel)
+    elif command -v auditwheel >/dev/null 2>&1; then
+      AUDITWHEEL_RUN=(auditwheel)
+    else
+      echo "auditwheel is required on Linux to publish to PyPI (linux_x86_64 is rejected)." >&2
+      echo "Install it (for example: ${PYTHON_BIN} -m pip install auditwheel) and retry." >&2
+      exit 1
+    fi
+
+    for wheel in "${NEED_REPAIR[@]}"; do
+      "${AUDITWHEEL_RUN[@]}" repair --strip -w "${REPAIR_DIR}" "${wheel}"
+      rm -f "${wheel}"
+    done
+
+    cp "${REPAIR_DIR}"/watpocket-"${VERSION}"-*.whl dist/
+    WHEELS=(dist/watpocket-"${VERSION}"-*.whl)
+  fi
+fi
+
 echo "Built wheel(s):"
-ls -1 dist/watpocket-"${VERSION}"-*.whl
+ls -1 "${WHEELS[@]}"
 
 if [[ "${BUILD_ONLY}" -eq 1 ]]; then
   echo "Build complete; skipping upload (--build-only)."
@@ -104,6 +139,6 @@ fi
   --non-interactive \
   --skip-existing \
   "${TWINE_ARGS[@]}" \
-  dist/watpocket-"${VERSION}"-*.whl
+  "${WHEELS[@]}"
 
 echo "Uploaded wheels for ${VERSION} (${SHORT_SHA}) to ${REPOSITORY}."

@@ -18,6 +18,7 @@ authors = [{ name = "watpocket developers" }]
 dev = [
   "build>=1.2",
   "twine>=5.1",
+  "auditwheel>=6.1; sys_platform == 'linux'",
 ]
 
 [tool.scikit-build]
