@@ -90,6 +90,10 @@ if [[ -n "${CMAKE_ARGS:-}" ]]; then
   BUILD_CMAKE_ARGS="${BUILD_CMAKE_ARGS} ${CMAKE_ARGS}"
 fi
 
+if [[ -z "${CMAKE_GENERATOR:-}" ]] && ! command -v ninja >/dev/null 2>&1; then
+  export CMAKE_GENERATOR="Unix Makefiles"
+fi
+
 BUILD_RUN_DIR="$(mktemp -d)"
 (
   cd "${BUILD_RUN_DIR}"

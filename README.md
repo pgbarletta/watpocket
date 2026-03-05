@@ -205,3 +205,4 @@ Notes:
 - The script uploads `dist/watpocket-<version>-*.whl` only (no source distribution).
 - Twine credentials can come from `~/.pypirc`, keyring, or `TWINE_USERNAME`/`TWINE_PASSWORD`.
 - On Linux, wheels are repaired with `auditwheel` before upload so PyPI accepts `manylinux` tags (not plain `linux_x86_64`).
+- If `ninja` is not installed, the release script automatically falls back to `CMAKE_GENERATOR="Unix Makefiles"`.
