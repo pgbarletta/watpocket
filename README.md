@@ -171,7 +171,7 @@ Install release tooling in your environment first:
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv -vv pip install -e ".[dev]" --no-progress -Cbuild.verbose=true
 ```
 
 1. Ensure your working tree is clean and choose the release version `X.Y.Z`.

@@ -152,6 +152,10 @@ if(CMAKE_SKIP_INSTALL_RULES)
   return()
 endif()
 
+if(SKBUILD)
+  return()
+endif()
+
 include(cmake/PackageProject.cmake)
 
 # Add other targets that you want installed here, by default we just package the one executable

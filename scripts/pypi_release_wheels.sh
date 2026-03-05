@@ -21,6 +21,19 @@ EOF
 
 TESTPYPI=0
 BUILD_ONLY=0
+BUILD_RUN_DIR=""
+REPAIR_DIR=""
+
+cleanup() {
+  if [[ -n "${BUILD_RUN_DIR}" && -d "${BUILD_RUN_DIR}" ]]; then
+    rm -rf "${BUILD_RUN_DIR}"
+  fi
+  if [[ -n "${REPAIR_DIR}" && -d "${REPAIR_DIR}" ]]; then
+    rm -rf "${REPAIR_DIR}"
+  fi
+}
+
+trap cleanup EXIT
 
 while (($# > 0)); do
   case "$1" in
@@ -77,7 +90,21 @@ if [[ -n "${CMAKE_ARGS:-}" ]]; then
   BUILD_CMAKE_ARGS="${BUILD_CMAKE_ARGS} ${CMAKE_ARGS}"
 fi
 
-WATPOCKET_VERSION="${VERSION}" CMAKE_ARGS="${BUILD_CMAKE_ARGS}" "${PYTHON_BIN}" -m build --wheel
+BUILD_RUN_DIR="$(mktemp -d)"
+(
+  cd "${BUILD_RUN_DIR}"
+  if "${PYTHON_BIN}" -c "import pip" >/dev/null 2>&1; then
+    WATPOCKET_VERSION="${VERSION}" CMAKE_ARGS="${BUILD_CMAKE_ARGS}" \
+      "${PYTHON_BIN}" -m pip wheel --no-deps --no-build-isolation --wheel-dir "${ROOT_DIR}/dist" "${ROOT_DIR}"
+  elif "${PYTHON_BIN}" -c "import build" >/dev/null 2>&1; then
+    WATPOCKET_VERSION="${VERSION}" CMAKE_ARGS="${BUILD_CMAKE_ARGS}" \
+      "${PYTHON_BIN}" -m build --wheel --no-isolation --outdir "${ROOT_DIR}/dist" "${ROOT_DIR}"
+  else
+    echo "Selected Python (${PYTHON_BIN}) has neither 'pip' nor 'build' available." >&2
+    echo "Install one of them, or set PYTHON_BIN to an interpreter that has packaging tooling." >&2
+    exit 1
+  fi
+)
 
 WHEELS=(dist/watpocket-"${VERSION}"-*.whl)
 if [[ ! -e "${WHEELS[0]}" ]]; then
@@ -96,7 +123,6 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   if [[ "${#NEED_REPAIR[@]}" -gt 0 ]]; then
     echo "Repairing Linux wheel tag(s) with auditwheel to produce manylinux wheel(s)..."
     REPAIR_DIR="$(mktemp -d)"
-    trap 'rm -rf "${BUILD_RUN_DIR}" "${REPAIR_DIR}"' EXIT
 
     if "${PYTHON_BIN}" -c "import auditwheel" >/dev/null 2>&1; then
       AUDITWHEEL_RUN=("${PYTHON_BIN}" -m auditwheel)
@@ -113,7 +139,13 @@ if [[ "$(uname -s)" == "Linux" ]]; then
       rm -f "${wheel}"
     done
 
-    cp "${REPAIR_DIR}"/watpocket-"${VERSION}"-*.whl dist/
+    REPAIRED_WHEELS=("${REPAIR_DIR}"/watpocket-"${VERSION}"-*.whl)
+    if [[ ! -e "${REPAIRED_WHEELS[0]}" ]]; then
+      echo "auditwheel did not produce repaired wheels for ${VERSION}." >&2
+      exit 1
+    fi
+
+    cp "${REPAIRED_WHEELS[@]}" dist/
     WHEELS=(dist/watpocket-"${VERSION}"-*.whl)
   fi
 fi

@@ -50,8 +50,13 @@ set_target_properties(
   PROPERTIES OUTPUT_NAME watpocket
              LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
              RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python"
-             BUILD_RPATH "${CMAKE_BINARY_DIR}/src/watpocket_lib"
-             INSTALL_RPATH "$ORIGIN/lib")
+             BUILD_RPATH "${CMAKE_BINARY_DIR}/src/watpocket_lib")
+
+if(SKBUILD)
+  set_target_properties(watpocket_ext PROPERTIES INSTALL_RPATH "$ORIGIN")
+else()
+  set_target_properties(watpocket_ext PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+endif()
 
 nanobind_add_stub(
   watpocket_stub
@@ -69,6 +74,7 @@ add_custom_target(watpocket_python_bindings ALL DEPENDS watpocket_ext watpocket_
 
 if(SKBUILD)
   install(TARGETS watpocket_ext LIBRARY DESTINATION . RUNTIME DESTINATION .)
+  install(TARGETS watpocket_lib LIBRARY DESTINATION . RUNTIME DESTINATION .)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/watpocket.pyi" DESTINATION .)
 else()
   configure_file(
