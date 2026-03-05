@@ -74,7 +74,7 @@ add_custom_target(watpocket_python_bindings ALL DEPENDS watpocket_ext watpocket_
 
 if(SKBUILD)
   install(TARGETS watpocket_ext LIBRARY DESTINATION . RUNTIME DESTINATION .)
-  install(TARGETS watpocket_lib LIBRARY DESTINATION . RUNTIME DESTINATION .)
+  install(FILES $<TARGET_FILE:watpocket_lib> DESTINATION .)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/watpocket.pyi" DESTINATION .)
 else()
   configure_file(

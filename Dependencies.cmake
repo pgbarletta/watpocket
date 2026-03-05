@@ -8,12 +8,16 @@ function(myproject_setup_dependencies)
   # For each dependency, see if it's
   # already been provided to us by a parent project
 
-  if(NOT TARGET Catch2::Catch2WithMain)
-    cpmaddpackage("gh:catchorg/Catch2@3.12.0")
+  if(BUILD_TESTING)
+    if(NOT TARGET Catch2::Catch2WithMain)
+      cpmaddpackage("gh:catchorg/Catch2@3.12.0")
+    endif()
   endif()
 
-  if(NOT TARGET CLI11::CLI11)
-    cpmaddpackage("gh:CLIUtils/CLI11@2.6.1")
+  if(WATPOCKET_BUILD_CLI)
+    if(NOT TARGET CLI11::CLI11)
+      cpmaddpackage("gh:CLIUtils/CLI11@2.6.1")
+    endif()
   endif()
 
   # Use vendored Chemfiles and CGAL from the repository (no per-build download

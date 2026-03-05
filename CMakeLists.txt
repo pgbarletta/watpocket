@@ -60,6 +60,13 @@ include(cmake/PreventInSourceBuilds.cmake)
 include(cmake/Emscripten.cmake)
 include(ProjectOptions.cmake)
 
+option(WATPOCKET_ENABLE_PYTHON_BINDINGS "Build Python bindings via nanobind" OFF)
+option(WATPOCKET_BUILD_CLI "Build the watpocket CLI executable" ON)
+if(SKBUILD)
+  set(WATPOCKET_ENABLE_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings via nanobind" FORCE)
+  set(WATPOCKET_BUILD_CLI OFF CACHE BOOL "Build the watpocket CLI executable" FORCE)
+  set(BUILD_TESTING OFF CACHE BOOL "Enable tests for this project" FORCE)
+endif()
 
 myproject_setup_options()
 
@@ -71,13 +78,6 @@ myproject_local_options()
 
 # don't know if this should be set globally from here or not...
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-
-option(WATPOCKET_ENABLE_PYTHON_BINDINGS "Build Python bindings via nanobind" OFF)
-option(WATPOCKET_BUILD_CLI "Build the watpocket CLI executable" ON)
-if(SKBUILD)
-  set(WATPOCKET_ENABLE_PYTHON_BINDINGS ON CACHE BOOL "Build Python bindings via nanobind" FORCE)
-  set(WATPOCKET_BUILD_CLI OFF CACHE BOOL "Build the watpocket CLI executable" FORCE)
-endif()
 
 if(NOT DEFINED GIT_SHA OR GIT_SHA STREQUAL "" OR GIT_SHA STREQUAL "Unknown")
   set(WATPOCKET_DETECTED_GIT_SHA "Unknown")
