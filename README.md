@@ -166,6 +166,14 @@ python -c "import watpocket; print(watpocket.__file__)"
 
 `watpocket` Python releases are wheel-only and versioned from the git tag at `HEAD`.
 
+Install release tooling in your environment first:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
+```
+
 1. Ensure your working tree is clean and choose the release version `X.Y.Z`.
 2. Create and push an annotated tag:
 

@@ -14,11 +14,18 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "watpocket developers" }]
 
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "twine>=5.1",
+]
+
 [tool.scikit-build]
 cmake.version = ">=3.28"
 cmake.build-type = "Release"
 build.targets = ["watpocket", "watpocket_ext", "watpocket_stub"]
 wheel.packages = []
+experimental = true
 
 [tool.scikit-build.cmake.define]
 WATPOCKET_ENABLE_PYTHON_BINDINGS = "ON"

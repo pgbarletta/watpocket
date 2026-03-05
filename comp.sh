@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# uv -vv pip install -e . --no-progress -Cbuild.verbose=true
+# uv -vv pip install -e ".[dev]" --no-progress -Cbuild.verbose=true
 #
-cmake -S . -B build \
+cmake -S . -B debug \
 	-DCMAKE_BUILD_TYPE=Release \
 	-Dmyproject_ENABLE_SANITIZER_ADDRESS=OFF \
 	-Dmyproject_ENABLE_SANITIZER_UNDEFINED=OFF \
@@ -11,4 +11,4 @@ cmake -S . -B build \
 	-DCMAKE_C_COMPILER_LAUNCHER= \
 	-DCMAKE_CXX_COMPILER_LAUNCHER=
 
-cmake --build build --target watpocket --parallel 12
+cmake --build debug --target watpocket --parallel 12
