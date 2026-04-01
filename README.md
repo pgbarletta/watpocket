@@ -162,6 +162,11 @@ cmake --install ./build --component pythoninstall
 python -c "import watpocket; print(watpocket.__file__)"
 ```
 
+## License
+
+`watpocket` is licensed under the GNU General Public License v3.0 or later.
+See [LICENSE](LICENSE) for details.
+
 ### Release a New Version
 
 `watpocket` Python releases are wheel-only and versioned from the git tag at `HEAD`.

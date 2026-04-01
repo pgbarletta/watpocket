@@ -61,6 +61,9 @@
 └── .github/                   # repo automation metadata (`actions/`, `dependabot.yml`, templates; no active `workflows/`)
 ```
 
+### Repository license
+- The repository-level license is `GPL-3.0-or-later` and is declared in the top-level `LICENSE` file plus package metadata in `pyproject.toml` (source: `LICENSE`, `pyproject.toml`).
+
 ### Build systems and entrypoints
 - Build system is CMake; top-level adds `configured_files`, `src`, and optionally `test` (source: `CMakeLists.txt`).
 - Runtime entrypoint for project deliverable is `src/watpocket/main.cpp` (`main`) (source: `src/watpocket/main.cpp:main`).
