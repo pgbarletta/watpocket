@@ -1,4 +1,5 @@
 include(CheckCXXCompilerFlag)
+include(CheckLibraryExists)
 
 macro(
   myproject_enable_hardening
@@ -36,6 +37,24 @@ macro(
     if(STACK_PROTECTOR)
       list(APPEND NEW_COMPILE_OPTIONS -fstack-protector-strong)
       message(STATUS "*** g++/clang -fstack-protector-strong enabled")
+
+      if(LINUX)
+        check_library_exists(ssp __stack_chk_guard "" HAVE_LIBSSP)
+        if(HAVE_LIBSSP)
+          list(APPEND NEW_LINK_LIBRARIES ssp)
+          execute_process(
+            COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=libssp.so
+            OUTPUT_VARIABLE SSP_LIBRARY_PATH
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+          if(NOT SSP_LIBRARY_PATH STREQUAL "libssp.so")
+            get_filename_component(SSP_LIBRARY_DIR "${SSP_LIBRARY_PATH}" DIRECTORY)
+            list(APPEND NEW_LINK_OPTIONS "-Wl,-rpath,${SSP_LIBRARY_DIR}")
+          endif()
+          message(STATUS "*** libssp linked for stack protector runtime")
+        else()
+          message(STATUS "*** libssp not found; relying on the platform runtime for stack protector")
+        endif()
+      endif()
     else()
       message(STATUS "*** g++/clang -fstack-protector-strong NOT enabled (not supported)")
     endif()
@@ -85,6 +104,7 @@ macro(
 
   message(STATUS "** Hardening Compiler Flags: ${NEW_COMPILE_OPTIONS}")
   message(STATUS "** Hardening Linker Flags: ${NEW_LINK_OPTIONS}")
+  message(STATUS "** Hardening Link Libraries: ${NEW_LINK_LIBRARIES}")
   message(STATUS "** Hardening Compiler Defines: ${NEW_CXX_DEFINITIONS}")
 
   if(${global})
@@ -92,9 +112,15 @@ macro(
     add_compile_options(${NEW_COMPILE_OPTIONS})
     add_compile_definitions(${NEW_CXX_DEFINITIONS})
     add_link_options(${NEW_LINK_OPTIONS})
+    if(NEW_LINK_LIBRARIES)
+      link_libraries(${NEW_LINK_LIBRARIES})
+    endif()
   else()
     target_compile_options(${target} INTERFACE ${NEW_COMPILE_OPTIONS})
     target_link_options(${target} INTERFACE ${NEW_LINK_OPTIONS})
+    if(NEW_LINK_LIBRARIES)
+      target_link_libraries(${target} INTERFACE ${NEW_LINK_LIBRARIES})
+    endif()
     target_compile_definitions(${target} INTERFACE ${NEW_CXX_DEFINITIONS})
   endif()
 endmacro()
