@@ -42,3 +42,6 @@ Thumbs.db
 external/cgal/.git
 external/chemfiles/.git
 Testing/
+.codex/
+plans/
+codebase-docs/

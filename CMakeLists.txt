@@ -1,37 +1,12 @@
 cmake_minimum_required(VERSION 3.28)
 
 # Disable modules support, this is broken with clang-tidy at the moment
-cmake_policy(SET CMP0155 OLD) 
+cmake_policy(SET CMP0155 OLD)
 
 set(WATPOCKET_DEFAULT_VERSION "0.0.2")
 
-function(watpocket_normalize_version_from_tag TAG_VALUE OUTPUT_VARIABLE)
-  if("${TAG_VALUE}" MATCHES "^v?([0-9]+\\.[0-9]+\\.[0-9]+)$")
-    set(${OUTPUT_VARIABLE} "${CMAKE_MATCH_1}" PARENT_SCOPE)
-    return()
-  endif()
-
-  set(${OUTPUT_VARIABLE} "" PARENT_SCOPE)
-endfunction()
-
 if(NOT DEFINED WATPOCKET_VERSION OR WATPOCKET_VERSION STREQUAL "")
   set(WATPOCKET_VERSION "${WATPOCKET_DEFAULT_VERSION}")
-
-  execute_process(
-    COMMAND git -C "${CMAKE_SOURCE_DIR}" describe --tags --exact-match
-    OUTPUT_VARIABLE WATPOCKET_GIT_TAG
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-    RESULT_VARIABLE WATPOCKET_GIT_TAG_RESULT)
-
-  if(WATPOCKET_GIT_TAG_RESULT EQUAL 0)
-    watpocket_normalize_version_from_tag("${WATPOCKET_GIT_TAG}" WATPOCKET_TAG_VERSION)
-    if(NOT WATPOCKET_TAG_VERSION STREQUAL "")
-      set(WATPOCKET_VERSION "${WATPOCKET_TAG_VERSION}")
-    else()
-      message(FATAL_ERROR "Git tag '${WATPOCKET_GIT_TAG}' is not a valid release tag. Expected vX.Y.Z or X.Y.Z.")
-    endif()
-  endif()
 endif()
 
 # This template attempts to be "fetch_content"-able
@@ -76,30 +51,16 @@ myproject_setup_dependencies()
 
 myproject_local_options()
 
-# don't know if this should be set globally from here or not...
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-if(NOT DEFINED GIT_SHA OR GIT_SHA STREQUAL "" OR GIT_SHA STREQUAL "Unknown")
-  set(WATPOCKET_DETECTED_GIT_SHA "Unknown")
-  execute_process(
-    COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse HEAD
-    OUTPUT_VARIABLE WATPOCKET_DETECTED_GIT_SHA
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-    RESULT_VARIABLE WATPOCKET_GIT_SHA_RESULT)
-  if(NOT WATPOCKET_GIT_SHA_RESULT EQUAL 0)
-    set(WATPOCKET_DETECTED_GIT_SHA "Unknown")
-  endif()
-
-  set(GIT_SHA
-      "${WATPOCKET_DETECTED_GIT_SHA}"
-      CACHE STRING "SHA this build was generated from"
-      FORCE)
-else()
-  set(GIT_SHA
-      "${GIT_SHA}"
-      CACHE STRING "SHA this build was generated from")
+if(NOT DEFINED GIT_SHA OR GIT_SHA STREQUAL "")
+  set(GIT_SHA "Unknown")
 endif()
+
+set(GIT_SHA
+    "${GIT_SHA}"
+    CACHE STRING "SHA this build was generated from"
+    FORCE)
 string(
   SUBSTRING "${GIT_SHA}"
             0

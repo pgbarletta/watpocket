@@ -9,7 +9,8 @@ Builds and uploads wheel artifacts only (no sdist) using the version from the
 exact git tag at HEAD (vX.Y.Z or X.Y.Z).
 
 Environment:
-  PYTHON_BIN            Python executable to use (default: python)
+  PYTHON_BIN            Python executable to use (default: .venv/bin/python,
+                        then python3, then python)
   TWINE_REPOSITORY      Override repository name (default: pypi, or testpypi with --testpypi)
   TWINE_USERNAME        Optional Twine username override
   TWINE_PASSWORD        Optional Twine password/token override
@@ -21,13 +22,9 @@ EOF
 
 TESTPYPI=0
 BUILD_ONLY=0
-BUILD_RUN_DIR=""
 REPAIR_DIR=""
 
 cleanup() {
-  if [[ -n "${BUILD_RUN_DIR}" && -d "${BUILD_RUN_DIR}" ]]; then
-    rm -rf "${BUILD_RUN_DIR}"
-  fi
   if [[ -n "${REPAIR_DIR}" && -d "${REPAIR_DIR}" ]]; then
     rm -rf "${REPAIR_DIR}"
   fi
@@ -75,11 +72,53 @@ fi
 GIT_SHA="$(git rev-parse HEAD)"
 SHORT_SHA="$(git rev-parse --short=8 HEAD)"
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
+resolve_python_bin() {
+  local candidate="${1:-}"
+
+  if [[ -n "${candidate}" ]]; then
+    if [[ "${candidate}" = /* ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+
+    if [[ "${candidate}" == */* ]]; then
+      local resolved="${ROOT_DIR}/${candidate}"
+      if [[ -x "${resolved}" ]]; then
+        printf '%s\n' "${resolved}"
+        return 0
+      fi
+      printf '%s\n' "${resolved}"
+      return 0
+    fi
+
+    command -v "${candidate}"
+    return 0
+  fi
+
+  if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+    printf '%s\n' "${ROOT_DIR}/.venv/bin/python"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  command -v python
+}
+
+PYTHON_BIN="$(resolve_python_bin "${PYTHON_BIN:-}")"
 REPOSITORY="${TWINE_REPOSITORY:-pypi}"
 if [[ "${TESTPYPI}" -eq 1 ]]; then
   REPOSITORY="testpypi"
 fi
+
+python_has_modules() {
+  local modules=("$@")
+  local code="import importlib.util, sys; missing=[name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]; raise SystemExit(1 if missing else 0)"
+  "${PYTHON_BIN}" -c "${code}" "${modules[@]}"
+}
 
 echo "Release tag: ${TAG}"
 echo "Version: ${VERSION}"
@@ -94,21 +133,34 @@ if [[ -z "${CMAKE_GENERATOR:-}" ]] && ! command -v ninja >/dev/null 2>&1; then
   export CMAKE_GENERATOR="Unix Makefiles"
 fi
 
-BUILD_RUN_DIR="$(mktemp -d)"
-(
-  cd "${BUILD_RUN_DIR}"
-  if "${PYTHON_BIN}" -c "import pip" >/dev/null 2>&1; then
-    WATPOCKET_VERSION="${VERSION}" CMAKE_ARGS="${BUILD_CMAKE_ARGS}" \
-      "${PYTHON_BIN}" -m pip wheel --no-deps --no-build-isolation --wheel-dir "${ROOT_DIR}/dist" "${ROOT_DIR}"
-  elif "${PYTHON_BIN}" -c "import build" >/dev/null 2>&1; then
-    WATPOCKET_VERSION="${VERSION}" CMAKE_ARGS="${BUILD_CMAKE_ARGS}" \
-      "${PYTHON_BIN}" -m build --wheel --no-isolation --outdir "${ROOT_DIR}/dist" "${ROOT_DIR}"
-  else
-    echo "Selected Python (${PYTHON_BIN}) has neither 'pip' nor 'build' available." >&2
-    echo "Install one of them, or set PYTHON_BIN to an interpreter that has packaging tooling." >&2
+if ! python_has_modules build; then
+  echo "Selected Python (${PYTHON_BIN}) needs the 'build' package." >&2
+  echo "Install them with: uv pip install -e \".[dev]\" --no-progress" >&2
+  exit 1
+fi
+
+if [[ "${BUILD_ONLY}" -ne 1 ]] && ! python_has_modules twine; then
+  echo "Selected Python (${PYTHON_BIN}) needs the 'twine' package for upload." >&2
+  echo "Install it with: uv pip install -e \".[dev]\" --no-progress" >&2
+  exit 1
+fi
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+  if ! python_has_modules auditwheel && ! command -v auditwheel >/dev/null 2>&1; then
+    echo "Linux releases require auditwheel to repair linux_x86_64 wheels into manylinux wheels." >&2
+    echo "Install it with: uv pip install -e \".[dev]\" --no-progress" >&2
     exit 1
   fi
-)
+
+  if ! command -v patchelf >/dev/null 2>&1; then
+    echo "Linux releases require patchelf on PATH for auditwheel repair." >&2
+    echo "Add patchelf to PATH before running this script." >&2
+    exit 1
+  fi
+fi
+
+WATPOCKET_VERSION="${VERSION}" CMAKE_ARGS="${BUILD_CMAKE_ARGS}" \
+  "${PYTHON_BIN}" -m build --wheel --no-isolation --outdir "${ROOT_DIR}/dist" "${ROOT_DIR}"
 
 WHEELS=(dist/watpocket-"${VERSION}"-*.whl)
 if [[ ! -e "${WHEELS[0]}" ]]; then

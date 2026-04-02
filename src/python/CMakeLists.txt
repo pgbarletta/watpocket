@@ -1,9 +1,3 @@
-if(CMAKE_VERSION VERSION_LESS 3.18)
-  set(PY_DEV_MODULE Development)
-else()
-  set(PY_DEV_MODULE Development.Module)
-endif()
-
 if(Python3_EXECUTABLE AND NOT Python_EXECUTABLE)
   set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "Python executable for nanobind" FORCE)
 endif()

@@ -171,7 +171,7 @@ See [LICENSE](LICENSE) for details.
 
 `watpocket` Python releases are wheel-only and versioned from the git tag at `HEAD`.
 
-Install release tooling in your environment first:
+Install the release tooling in a local virtual environment first:
 
 ```bash
 uv venv
@@ -187,13 +187,13 @@ git tag -a X.Y.Z -m "Release X.Y.Z"
 git push origin X.Y.Z
 ```
 
-3. Build wheels only (no upload):
+3. Build wheels locally to verify the release:
 
 ```bash
 scripts/pypi_release_wheels.sh --build-only
 ```
 
-4. Upload to PyPI:
+4. Upload the same tagged release to PyPI:
 
 ```bash
 scripts/pypi_release_wheels.sh
@@ -203,5 +203,5 @@ Notes:
 - Accepted release tags are `X.Y.Z` or `vX.Y.Z`.
 - The script uploads `dist/watpocket-<version>-*.whl` only (no source distribution).
 - Twine credentials can come from `~/.pypirc`, keyring, or `TWINE_USERNAME`/`TWINE_PASSWORD`.
-- On Linux, wheels are repaired with `auditwheel` before upload so PyPI accepts `manylinux` tags (not plain `linux_x86_64`).
-- If `ninja` is not installed, the release script automatically falls back to `CMAKE_GENERATOR="Unix Makefiles"`.
+- On Linux, wheels are repaired with `auditwheel` before upload so PyPI accepts `manylinux` tags (not plain `linux_x86_64`); `patchelf` must also be available on `PATH`.
+- The release script prefers `.venv/bin/python` when present and otherwise falls back to `python3` or `python`.

@@ -16,16 +16,6 @@ endif()
 # Expand relative path. This is important if the provided path contains a tilde (~)
 get_filename_component(CPM_DOWNLOAD_LOCATION ${CPM_DOWNLOAD_LOCATION} ABSOLUTE)
 
-if(NOT BUILD_TESTING AND NOT WATPOCKET_BUILD_CLI)
-  message(WARNING "Using offline no-op CPM fallback for wheel builds")
-
-  function(cpmaddpackage)
-    message(FATAL_ERROR "CPMAddPackage is unavailable in the offline fallback")
-  endfunction()
-
-  return()
-endif()
-
 if(EXISTS "${CPM_DOWNLOAD_LOCATION}")
   include("${CPM_DOWNLOAD_LOCATION}")
   return()
