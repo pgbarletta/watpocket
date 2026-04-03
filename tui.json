@@ -1,0 +1,9 @@
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "keybinds": {
+    "leader": "`",
+    "model_cycle_favorite": "<leader>f",
+    "model_cycle_favorite_reverse": "<leader>shift+f",
+    "variant_cycle": "<leader>v"
+  }
+}

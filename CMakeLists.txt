@@ -46,6 +46,7 @@ endif()
 myproject_setup_options()
 
 myproject_global_options()
+include(CTest)
 include(Dependencies.cmake)
 myproject_setup_dependencies()
 
@@ -92,7 +93,6 @@ if(NOT PROJECT_IS_TOP_LEVEL)
 endif()
 
 # Adding the tests:
-include(CTest)
 
 if(BUILD_TESTING)
   message(AUTHOR_WARNING "Building tests (see test/ for CLI smoke tests and API sanity checks)")

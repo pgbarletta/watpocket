@@ -5,6 +5,12 @@ This repository contains `watpocket`, a C++ project that integrates:
 - `chemfiles` for molecular structure/trajectory IO
 - `CGAL` for convex hull and geometric computation
 
+## Environment Setup
+Before running any build commands, activate the virtual environment:
+```bash
+source .venv/bin/activate
+```
+
 ## Required Workflow
 1. Read the current codebase map before making changes:
    - `codebase-analysis-docs/codebasemap.md`
